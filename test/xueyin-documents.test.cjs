@@ -45,8 +45,9 @@ async function setup(t,{confirm=true,controller=false,videoRace=false,remainingV
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
   return p;
 }
-test('normal document scrolling waits for platform marks, records both documents and returns',async t=>{
+test('reader-native document scrolling waits for platform marks, records both documents and returns',async t=>{
   const p=await setup(t,{controller:true});
+  await p.evaluate(()=>{XyBridge.scroll=()=>{throw Error('Native input unavailable');};});
   await p.waitForFunction(()=>window.returned,null,{timeout:60000});
   assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
   assert.equal(await p.evaluate(()=>reports.at(-1).tasks.every(t=>t.complete)),true);
@@ -95,6 +96,6 @@ test('reader loading time does not consume the scrolling stall budget',async t=>
   await p.evaluate(()=>{window.events=[];addEventListener('message',e=>{if(e.data?.type?.startsWith('xy-document-'))events.push(e.data)});document.querySelector('iframe').contentWindow.postMessage({type:'xy-read-document'},'*');});
   // Simulate delayed rendering before the first ready-reader poll.
   await reader.evaluate(()=>{clockOffset=19000});await p.waitForFunction(()=>events.some(e=>e.stage==='browsing'),null,{timeout:5000});
-  await reader.evaluate(()=>{clockOffset=23000});await p.waitForFunction(()=>events.some(e=>e.type==='xy-document-wheel'),null,{timeout:5000});
+  await reader.evaluate(()=>{clockOffset=23000});await reader.waitForFunction(()=>document.scrollingElement.scrollTop>0,null,{timeout:5000});
   assert.equal(await p.evaluate(()=>events.some(e=>e.stage==='stalled')),false);
 });
