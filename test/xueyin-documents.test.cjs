@@ -85,3 +85,16 @@ test('pause cancels document scrolling throughout nested reader frames',async t=
   assert.equal(await f.evaluate(()=>document.scrollingElement.scrollTop),before);
   assert.equal(await p.evaluate(()=>reports.at(-1).stage),'idle');
 });
+
+test('reader loading time does not consume the scrolling stall budget',async t=>{
+  const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());const p=await b.newPage();
+  const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="1600"><rect width="200" height="1600" fill="white"/></svg>');
+  await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:r.request().url().includes('/screen/v2/')?`<div class="fileBox"><img src="${image}"></div>`:'<iframe style="width:500px;height:300px" src="https://p.ananas.chaoxing.com/screen/v2/mock-delay"></iframe>'}));
+  await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');const reader=p.frames().find(f=>f.url().includes('/screen/v2/'));await reader.waitForFunction(()=>document.querySelector('img')?.complete);
+  await reader.evaluate(()=>{const realNow=Date.now;window.clockOffset=0;Date.now=()=>realNow()+clockOffset;});await reader.addScriptTag({content:source});
+  await p.evaluate(()=>{window.events=[];addEventListener('message',e=>{if(e.data?.type?.startsWith('xy-document-'))events.push(e.data)});document.querySelector('iframe').contentWindow.postMessage({type:'xy-read-document'},'*');});
+  // Simulate delayed rendering before the first ready-reader poll.
+  await reader.evaluate(()=>{clockOffset=19000});await p.waitForFunction(()=>events.some(e=>e.stage==='browsing'),null,{timeout:5000});
+  await reader.evaluate(()=>{clockOffset=23000});await p.waitForFunction(()=>events.some(e=>e.type==='xy-document-wheel'),null,{timeout:5000});
+  assert.equal(await p.evaluate(()=>events.some(e=>e.stage==='stalled')),false);
+});
