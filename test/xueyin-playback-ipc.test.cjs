@@ -95,6 +95,10 @@ test('course iframe diagnostics and document wheel input enforce source, status 
   assert.equal((await handlers.get('xy-document-return')(event)).accepted,false);
   assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,true);
   assert.equal(navigation.at(-1),courseUrl);
+  handlers.get('xy-state-update')(rootEvent,{awaitingPlatform:{section:'1.1',taskId:'1.1/video/0'}});
+  assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,true);
+  handlers.get('xy-state-update')(rootEvent,{awaitingPlatform:{section:'1.1',taskId:'1.1/quiz/0'}});
+  assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,false);
 
   const stateFile=path.join(data,'xueyin-study','state.json');
   const expired=new Date(Date.now()-60000).toISOString();

@@ -380,7 +380,7 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
   ipcMain.handle('xy-document-return',async event=>{
     const current=read(),target=config();
     if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||!target||current.status!=='running'||
-      !/\/document\/\d+$/.test(current.awaitingPlatform?.taskId||'')||
+      !/\/(?:document|video)\/\d+$/.test(current.awaitingPlatform?.taskId||'')||
       current.awaitingPlatform.section!==current.currentSection)return {accepted:false};
     if(documentDebuggerOwned){try{contents().debugger.detach();}catch{}documentDebuggerOwned=false;}
     await contents().loadURL(target.url);

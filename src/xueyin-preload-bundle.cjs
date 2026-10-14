@@ -363,7 +363,7 @@ function runContent(){
     }
     const reportedCards=localCards.length?localCards:
       targets.length===1?frameData(targets[0])?.cards:null;
-    const explicitVideoComplete=state.currentSection===waiting.section&&taskIndex!==undefined&&
+    const explicitVideoComplete=!waiting.catalogRefreshRequested&&state.currentSection===waiting.section&&taskIndex!==undefined&&
       reportedCards?.[Number(taskIndex)]?.complete===true;
     const documentIndex=/\/document\/(\d+)$/.exec(waiting.taskId)?.[1];
     const documentReport=targets.length===1?frameStatus.get(targets[0])?.documentReport:null;
@@ -514,8 +514,16 @@ function runContent(){
         !doneIds.has(`${id}/video/${position}`));
     if(index<0){
       if(Number.isInteger(confirmedPending)&&confirmedPending>0){
-        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         const documents=frameData(videos[0])?.pendingDocuments;
+        if(remoteMode&&documents===0&&remoteCards.every(card=>card.complete&&card.evidence==='job-marker')&&bridge.returnToCourse){
+          const finishedTask=new RegExp(`^${id.replace('.', '\\.')}\\/video\\/\\d+$`).test(state.currentTask||'')?
+            state.currentTask:`${id}/video/${remoteCards.length-1}`;
+          await save({currentTask:finishedTask,awaitingPlatform:{section:id,taskId:finishedTask,
+            pendingBefore:confirmedPending,platformDoneBefore:count?.done??state.platformDone,
+            catalogRefreshRequested:true,returnedAt:now()}});
+          void bridge.returnToCourse().catch(()=>{});return true;
+        }
+        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         await block(Number.isInteger(documents)&&documents>0?
           `本节视频已完成，剩余 ${documents} 份文档任务；请展开课程阅读，完成后恢复`:
           '目录仍有未完成任务点，但当前页面未找到待播放卡片');
