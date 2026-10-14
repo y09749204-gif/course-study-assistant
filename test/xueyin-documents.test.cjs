@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {chromium}=require('playwright-core');
 const source=fs.readFileSync(path.join(__dirname,'../src/xueyin-document-frame.cjs'),'utf8');
 const content=fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8');
-async function setup(t,{confirm=true,controller=false,videoRace=false}={}){
+async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false}={}){
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
   const p=await b.newPage();
   const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="340"><rect width="280" height="340" fill="white"/></svg>');
@@ -37,6 +37,10 @@ async function setup(t,{confirm=true,controller=false,videoRace=false}={}){
       setInterval(()=>{if(videoControllerActive)parent.scrollTo(0,2400);},150);
     });
   }
+  if(remainingVideo)await p.evaluate(()=>{
+    document.querySelector('li span').textContent='1';__state.sectionPending['1.1']=1;__state.platformTotal=3;
+    document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/3';document.querySelector('#cards').remove();};
+  });
   if(controller)await p.addScriptTag({content});
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
   return p;
@@ -54,6 +58,15 @@ test('document ownership stops a competing video controller before normal reader
   await chapter.waitForFunction(()=>videoPauseSeen&&!videoControllerActive,null,{timeout:7000});
   await p.waitForFunction(()=>window.returned,null,{timeout:60000});
   assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
+});
+
+test('confirmed documents clear return verification while the chapter retains a pending video',async t=>{
+  const p=await setup(t,{controller:true,remainingVideo:true});
+  await p.waitForFunction(()=>window.returned&&__state.awaitingPlatform===null,null,{timeout:60000});
+  assert.equal(await p.evaluate(()=>__state.sectionPending['1.1']),1);
+  assert.equal(await p.evaluate(()=>__state.platformDone),2);
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
+  assert.notEqual(await p.evaluate(()=>__state.status),'blocked');
 });
 test('reading to the end without a platform mark remains unconfirmed',async t=>{
   const p=await setup(t,{confirm:false});

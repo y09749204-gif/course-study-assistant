@@ -365,11 +365,16 @@ function runContent(){
       targets.length===1?frameData(targets[0])?.cards:null;
     const explicitVideoComplete=state.currentSection===waiting.section&&taskIndex!==undefined&&
       reportedCards?.[Number(taskIndex)]?.complete===true;
+    const documentIndex=/\/document\/(\d+)$/.exec(waiting.taskId)?.[1];
+    const documentReport=targets.length===1?frameStatus.get(targets[0])?.documentReport:null;
+    const explicitDocumentComplete=state.currentSection===waiting.section&&row&&documentIndex!==undefined&&
+      (waiting.documentConfirmed===true||documentReport&&Date.now()-documentReport.receivedAt<5000&&
+        documentReport.tasks[Number(documentIndex)]?.complete===true);
     const count=platformCount();
     const lastPointWithoutNumber=row&&row.pending===null&&before===1&&count&&
       (Number.isInteger(waiting.platformDoneBefore)?count.done>waiting.platformDoneBefore:
         waiting.section==='1.1'&&waiting.taskId==='1.1/video/1'&&count.done===3);
-    if(explicitVideoComplete||row&&Number.isInteger(before)&&
+    if(explicitVideoComplete||explicitDocumentComplete||row&&Number.isInteger(before)&&
       (Number.isInteger(row.pending)&&row.pending<before||lastPointWithoutNumber)){
       const doneIds=[...new Set([...(state.completedTaskIds||[]),waiting.taskId])];
       await save({awaitingPlatform:null,completedTaskIds:doneIds,currentTask:null,
@@ -390,7 +395,8 @@ function runContent(){
       bridge.catalogDiagnostic?.({...catalogDiagnostic(),rows:rows.slice(0,8).map(item=>({
         id:item.id,quiz:item.quiz,pending:item.pending,active:item.active,
         start:item.title.slice(0,90)}))});
-      await block(`${waiting.section} 的视频已结束，但目录任务点未减少`);
+      await block(documentIndex!==undefined?`${waiting.section} 的文档完成尚待平台核对`:
+        `${waiting.section} 的视频已结束，但目录任务点未减少`);
     }
     return true;
   }
@@ -412,7 +418,8 @@ function runContent(){
       const link=back?.closest('a,button,[role=button]')||back?.parentElement;
       if(!link&&!bridge.returnToCourse){await block('文档已浏览，但未找到返回课程入口以核对任务点');return true;}
       await save({awaitingPlatform:{section:id,taskId:state.currentTask,
-        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,returnedAt:now()}});
+        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,
+        documentConfirmed:true,returnedAt:now()}});
       if(bridge.returnToCourse)void bridge.returnToCourse().catch(()=>{});
       else link.click();
       return true;
