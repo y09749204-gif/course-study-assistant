@@ -424,7 +424,12 @@ function runContent(){
     }
     const taskId=`${id}/document/${index}`;
     if(state.currentTask!==taskId)await save({currentTask:taskId,lastObservedAt:now()});
-    if(report.stage==='idle')target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    if(report.stage==='idle'){
+      // Both drivers share the chapter frame. Stop its video driver before
+      // starting the reader so video initialization cannot scroll it away.
+      target.contentWindow.postMessage({type:'xy-pause'},'*');
+      target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    }
     return true;
   }
   async function processVideo(rows){
@@ -1390,6 +1395,9 @@ function runDocumentFrame(){
       if(!active)return;
       if(child!==target?.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'))return;
       if(event.data.type==='xy-document-wheel'){
+        // Layout changes or a previously initialized video may have moved
+        // this job outside the main viewport. Re-establish the input target.
+        target.scrollIntoView({block:'center',behavior:'instant'});
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;

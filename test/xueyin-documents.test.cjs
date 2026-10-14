@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {chromium}=require('playwright-core');
 const source=fs.readFileSync(path.join(__dirname,'../src/xueyin-document-frame.cjs'),'utf8');
 const content=fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8');
-async function setup(t,{confirm=true,controller=false}={}){
+async function setup(t,{confirm=true,controller=false,videoRace=false}={}){
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
   const p=await b.newPage();
   const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="340"><rect width="280" height="340" fill="white"/></svg>');
@@ -28,6 +28,15 @@ async function setup(t,{confirm=true,controller=false}={}){
     window.XyBridge={scroll:detail=>__normalWheel(detail),state:async()=>({...__state}),update:async patch=>Object.assign(__state,patch),notify:async()=>{},onCommand:f=>window.command=f};
     document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/2';document.querySelector('li span').textContent='0';document.querySelector('#cards').remove();};
   });
+  if(videoRace){
+    await p.evaluate(()=>{window.__state.currentTask='1.1/video/0';document.body.style.minHeight='3200px';});
+    const chapter=p.frames().find(f=>f.url().includes('/knowledge/cards'));
+    await chapter.evaluate(()=>{
+      window.videoControllerActive=true;window.videoPauseSeen=false;
+      addEventListener('message',e=>{if(e.data?.type==='xy-pause'){videoControllerActive=false;videoPauseSeen=true;}});
+      setInterval(()=>{if(videoControllerActive)parent.scrollTo(0,2400);},150);
+    });
+  }
   if(controller)await p.addScriptTag({content});
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
   return p;
@@ -37,6 +46,14 @@ test('normal document scrolling waits for platform marks, records both documents
   await p.waitForFunction(()=>window.returned,null,{timeout:60000});
   assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
   assert.equal(await p.evaluate(()=>reports.at(-1).tasks.every(t=>t.complete)),true);
+});
+
+test('document ownership stops a competing video controller before normal reader scrolling',async t=>{
+  const p=await setup(t,{controller:true,videoRace:true});
+  const chapter=p.frames().find(f=>f.url().includes('/knowledge/cards'));
+  await chapter.waitForFunction(()=>videoPauseSeen&&!videoControllerActive,null,{timeout:7000});
+  await p.waitForFunction(()=>window.returned,null,{timeout:60000});
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
 });
 test('reading to the end without a platform mark remains unconfirmed',async t=>{
   const p=await setup(t,{confirm:false});
