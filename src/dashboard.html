@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'">
+<title>个人网课学习助手</title><link rel="stylesheet" href="dashboard.css"></head>
+<body class="compact">
+<aside id="sidebar" aria-label="学习控制">
+  <header class="sidebar-header">
+    <label class="course-picker"><span class="sr-only">选择课程</span><select id="courseSelect"><option value="mayuan">智慧树</option><option value="xueyin">学习通</option></select></label>
+    <span id="badge" class="badge" role="status">读取中</span>
+    <button id="pinWindow" class="icon-button" aria-pressed="true" aria-label="取消置顶" title="取消置顶"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l-1 6 4 4v2H6v-2l4-4-1-6ZM12 15v6"/></svg></button>
+    <button id="tabSettings" class="icon-button" aria-label="设置与核对" aria-expanded="false" title="设置与核对"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 3-1 3-3 1-1 4 2 2-1 3 3 3 3-1 2 2 4-1 1-3 3-1V9l-3-1-1-3-4-1-2 2-2-3Z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button id="moreButton" class="icon-button more-button" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" title="更多操作">⋯</button>
+  </header>
+  <div id="moreMenu" class="action-menu" role="menu" hidden>
+    <button id="open" role="menuitem">打开课程</button>
+    <button id="refreshCourse" role="menuitem">刷新课程</button>
+    <button id="closeCourse" role="menuitem">关闭课程</button>
+    <hr>
+    <button id="end" class="danger-text" role="menuitem">结束任务</button>
+  </div>
+  <div class="provider-line"><span id="courseProvider">智慧树</span><span id="courseDate"></span></div>
+  <div id="studyPanel" class="tab-panel">
+    <section class="summary" aria-label="智慧树进度">
+      <div><small>完成小节</small><strong><span id="lessons">0</span><span class="unit">节</span></strong><span class="metric-note" id="lessonGoal">目标 2 节</span></div>
+      <div><small>正常播放</small><strong><span id="minutes">0</span><span class="unit">分钟</span></strong><span class="metric-note" id="minuteGoal">目标 25 分钟</span></div>
+    </section>
+  </div>
+  <div id="environmentPanel" class="tab-panel" hidden>
+    <section class="summary" aria-label="学习通进度">
+      <div><small>完成任务点</small><strong id="xyCount">— / —</strong><span class="metric-note">以平台目录为准</span></div>
+      <div><small>已提交测验</small><strong><span id="xyQuizzes">0</span><span class="unit">份</span></strong><span class="metric-note">章节测验</span></div>
+    </section>
+  </div>
+  <section id="taskPanel" class="task-panel">
+    <div class="task-heading"><span>当前小节</span><strong id="currentSection">待确认</strong><span id="taskKind"></span></div>
+    <div id="taskInfo" class="task-info">
+      <p id="detail" class="detail">正在读取任务状态…</p><p id="xyDetail" class="detail" hidden></p>
+      <button id="toggleDetail" class="text-button" aria-expanded="false" hidden>查看完整说明</button>
+    </div>
+    <div id="xyResolvePanel" class="resolve-panel" hidden>
+      <p>先展开课程核对提交结果，再选择：</p>
+      <div class="actions"><button id="xySubmitted">确认已提交</button><button id="xyNotSubmitted">确认未提交</button></div>
+    </div>
+    <button id="primaryAction" class="primary primary-action">开始</button>
+    <p id="taskFootnote" class="task-footnote">正常速度播放 · 默认静音</p>
+  </section>
+  <div id="settingsPanel" class="tab-panel" hidden>
+    <div class="settings-heading"><button id="tabStudy" class="text-button">← 返回学习</button><h1>设置与核对</h1></div>
+    <details class="settings-group" open><summary>答题 AI</summary><div class="group-content">
+      <p>套餐方式使用本机 Codex 登录，题目与选项发送到云端并消耗套餐额度。学习通无法判断时暂停。</p>
+      <div class="form"><label>方式<select id="mode"><option value="off">关闭 AI</option><option value="codex-plan">ChatGPT 套餐（Codex）</option><option value="compatible">兼容 Chat Completions 的接口</option></select></label><label>接口地址<input id="endpoint" placeholder="https://…/v1/chat/completions"></label><label>模型<input id="model" placeholder="模型名"></label><label>API Key（留空保持原值）<input id="key" type="password" autocomplete="off"></label></div>
+      <div class="actions"><button id="saveAi" class="primary">保存设置</button><button id="clearKey">清除 Key</button></div><p id="aiNote" class="detail"></p>
+    </div></details>
+    <details class="settings-group" id="courseSettings"><summary>课程配置</summary><div class="group-content">
+      <div id="xySettings" hidden><p>保存学习通学习页面链接。链接在本机加密保存，不会回显。</p><div class="form"><label>学习页面链接<input id="xyUrl" type="password" autocomplete="off" placeholder="粘贴课程学习页面链接"></label></div><button id="xySaveUrl">保存课程链接</button><p id="xyConfigNote" class="detail"></p></div>
+      <p id="mayuanConfig">智慧树按每日目标播放，平台记录仍需核对。</p>
+      <div id="profileConfig">
+        <p>每门课程分别保存进度；同一平台复用登录会话。学习通按全课任务点处理，智慧树使用每日目标。</p>
+        <div class="form">
+          <label>管理课程<select id="profileEdit"></select></label>
+          <label>课程名称<input id="profileName" maxlength="40" autocomplete="off"></label>
+          <label>平台<select id="profilePlatform"><option value="mayuan">智慧树</option><option value="xueyin">学习通</option></select></label>
+          <label>课程学习页面链接<input id="profileUrl" type="password" autocomplete="off" placeholder="新增时必填；已保存的链接不回显"></label>
+          <label id="profileChapterField" hidden>课程总章数（用于完成核对）<input id="profileChapters" type="number" min="1" max="500" placeholder="填写平台目录的总章数"></label>
+          <div id="profileGoals"><p>目标用于新一天的任务，已有目标快照保留。</p><label>每日新完成小节<input id="profileLessons" type="number" min="1" max="100" value="2"></label><label>每日正常播放分钟<input id="profileMinutes" type="number" min="1" max="480" value="25"></label><label>成绩分析链接（可选）<input id="profileScore" type="password" autocomplete="off" placeholder="留空保持已保存的链接"></label></div>
+        </div>
+        <div class="actions"><button id="profileSave" class="primary">保存课程</button><button id="profileNew">新增课程</button></div>
+        <p id="profileNote" class="detail"></p>
+      </div>
+    </div></details>
+    <details class="settings-group"><summary>自动运行</summary><div class="group-content">
+      <label class="switch"><input id="auto" type="checkbox"><span>每日 06:00 自动检查当前智慧树课程</span></label>
+      <label class="switch"><input id="xyAuto" type="checkbox"><span>智慧树任务后自动继续当前学习通课程</span></label>
+    </div></details>
+    <details class="settings-group"><summary>平台核对</summary><div class="group-content">
+      <div id="mayuanReview"><span id="platform" class="review-label">待核对</span><p>次日读取成绩分析中的学习记录，数据延迟时继续复查。</p><div id="history"></div><div class="actions"><button id="checkPlatform">立即读取</button><button id="openScore">打开成绩分析</button></div><p id="platformNote" class="detail"></p></div>
+      <p id="environmentReview" hidden>学习通任务点和测验提交情况以课程平台为准。可展开课程查看目录与测验结果。</p>
+    </div></details>
+    <footer>登录会话和课程链接加密保存在本机。</footer>
+  </div>
+</aside>
+<div id="divider" role="separator" aria-label="调整助手宽度" aria-orientation="vertical" aria-valuemin="300" aria-valuemax="480" aria-valuenow="360" tabindex="0"></div>
+<section id="coursePane" aria-label="课程网页">
+  <div class="course-toolbar"><div class="course-heading"><strong id="webTitle">智慧树课程</strong><span id="courseLocation">尚未打开</span></div><span class="preview-label">课程预览</span><div class="toolbar-actions"><button id="backCourse" hidden>返回课程</button><button id="expandCourse">展开课程 ↗</button></div></div>
+  <div id="coursePlaceholder" class="placeholder"><div class="placeholder-card"><span class="placeholder-icon" aria-hidden="true">▷</span><h2>课程尚未打开</h2><p>登录或检查课程时，可在这里打开。</p><button id="openRight">打开课程</button></div></div>
+</section>
+<script src="dashboard.js"></script></body></html>

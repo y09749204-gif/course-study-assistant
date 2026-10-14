@@ -1,0 +1,3 @@
+# Optional OCR components; not bundled with the source release.
+Pillow>=10,<13
+rapidocr-onnxruntime>=1.3,<2

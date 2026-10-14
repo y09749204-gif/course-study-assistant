@@ -1,0 +1,24 @@
+{
+  "name": "course-study-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Configurable local course assistant for Zhihuishu and Chaoxing",
+  "main": "src/main.cjs",
+  "scripts": {
+    "build:preload": "node scripts/generate-xueyin-preload.cjs",
+    "start": "node scripts/start.cjs --user-data",
+    "test": "node --test --test-concurrency=1 test/*.test.cjs",
+    "dev": "node scripts/start.cjs",
+    "check:privacy": "node scripts/privacy-check.cjs",
+    "check:generated": "node scripts/check-generated.cjs",
+    "test:browser:install": "npx playwright-core install chromium"
+  },
+  "devDependencies": {
+    "electron": "44.2.0",
+    "playwright-core": "^1.63.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  }
+}

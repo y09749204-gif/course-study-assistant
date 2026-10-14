@@ -1,0 +1,31 @@
+const {contextBridge,ipcRenderer}=require('electron');
+contextBridge.exposeInMainWorld('study',{
+  setCourseExpanded:value=>ipcRenderer.invoke('course-expanded',value),
+  windowPinned:value=>ipcRenderer.invoke('window-pinned',value),
+  status:()=>ipcRenderer.invoke('zhs-status'),
+  open:()=>ipcRenderer.invoke('zhs-open'),
+  openScore:()=>ipcRenderer.invoke('zhs-open-score'),
+  refreshCourse:()=>ipcRenderer.invoke('zhs-refresh'),
+  closeCourse:()=>ipcRenderer.invoke('zhs-close'),
+  resizePane:width=>ipcRenderer.invoke('zhs-pane-width',width),
+  command:type=>ipcRenderer.invoke('zhs-command',type),
+  enable:value=>ipcRenderer.invoke('zhs-enable',value),
+  platformReview:()=>ipcRenderer.invoke('zhs-platform-review'),
+  aiGet:()=>ipcRenderer.invoke('zhs-ai-get'),
+  aiSave:value=>ipcRenderer.invoke('zhs-ai-save',value)
+});
+contextBridge.exposeInMainWorld('environment',{
+  status:()=>ipcRenderer.invoke('xy-status'),
+  saveUrl:value=>ipcRenderer.invoke('xy-course-url-save',value),
+  open:()=>ipcRenderer.invoke('xy-open'),
+  close:()=>ipcRenderer.invoke('xy-close'),
+  refresh:()=>ipcRenderer.invoke('xy-refresh'),
+  command:type=>ipcRenderer.invoke('xy-command',type),
+  enable:value=>ipcRenderer.invoke('xy-enable',value),
+  resizePane:width=>ipcRenderer.invoke('xy-pane-width',width),
+  resolveSubmission:outcome=>ipcRenderer.invoke('xy-resolve-submission',outcome)
+});
+
+contextBridge.exposeInMainWorld('courses',{
+  list:()=>ipcRenderer.invoke('courses-list'),select:id=>ipcRenderer.invoke('courses-select',id),save:input=>ipcRenderer.invoke('courses-save',input)
+});
