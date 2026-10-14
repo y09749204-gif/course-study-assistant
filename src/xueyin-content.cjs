@@ -401,9 +401,13 @@
       return true;
     }
     if(remoteMode){
-      for(const [position,card] of remoteCards.entries())
+      for(const [position,card] of remoteCards.entries()){
+        if(card.evidence==='job-marker'&&!card.complete&&confirmedPending>0)
+          doneIds.delete(`${id}/video/${position}`);
         if(card.complete)doneIds.add(`${id}/video/${position}`);
-      if(doneIds.size>(state.completedTaskIds||[]).length)
+      }
+      if(doneIds.size!==(state.completedTaskIds||[]).length||
+        (state.completedTaskIds||[]).some(task=>!doneIds.has(task)))
         await save({completedTaskIds:[...doneIds],lastObservedAt:now()});
     }else if(cardMode){
       for(const [position,card] of cards.entries())
