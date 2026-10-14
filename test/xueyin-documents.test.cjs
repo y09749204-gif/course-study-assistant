@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {chromium}=require('playwright-core');
 const source=fs.readFileSync(path.join(__dirname,'../src/xueyin-document-frame.cjs'),'utf8');
 const content=fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8');
-async function setup(t,{confirm=true,controller=false}={}){
+async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false}={}){
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
   const p=await b.newPage();
   const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="340"><rect width="280" height="340" fill="white"/></svg>');
@@ -28,15 +28,46 @@ async function setup(t,{confirm=true,controller=false}={}){
     window.XyBridge={scroll:detail=>__normalWheel(detail),state:async()=>({...__state}),update:async patch=>Object.assign(__state,patch),notify:async()=>{},onCommand:f=>window.command=f};
     document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/2';document.querySelector('li span').textContent='0';document.querySelector('#cards').remove();};
   });
+  if(videoRace){
+    await p.evaluate(()=>{window.__state.currentTask='1.1/video/0';document.body.style.minHeight='3200px';});
+    const chapter=p.frames().find(f=>f.url().includes('/knowledge/cards'));
+    await chapter.evaluate(()=>{
+      window.videoControllerActive=true;window.videoPauseSeen=false;
+      addEventListener('message',e=>{if(e.data?.type==='xy-pause'){videoControllerActive=false;videoPauseSeen=true;}});
+      setInterval(()=>{if(videoControllerActive)parent.scrollTo(0,2400);},150);
+    });
+  }
+  if(remainingVideo)await p.evaluate(()=>{
+    document.querySelector('li span').textContent='1';__state.sectionPending['1.1']=1;__state.platformTotal=3;
+    document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/3';document.querySelector('#cards').remove();};
+  });
   if(controller)await p.addScriptTag({content});
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
   return p;
 }
-test('normal document scrolling waits for platform marks, records both documents and returns',async t=>{
+test('reader-native document scrolling waits for platform marks, records both documents and returns',async t=>{
   const p=await setup(t,{controller:true});
+  await p.evaluate(()=>{XyBridge.scroll=()=>{throw Error('Native input unavailable');};});
   await p.waitForFunction(()=>window.returned,null,{timeout:60000});
   assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
   assert.equal(await p.evaluate(()=>reports.at(-1).tasks.every(t=>t.complete)),true);
+});
+
+test('document ownership stops a competing video controller before normal reader scrolling',async t=>{
+  const p=await setup(t,{controller:true,videoRace:true});
+  const chapter=p.frames().find(f=>f.url().includes('/knowledge/cards'));
+  await chapter.waitForFunction(()=>videoPauseSeen&&!videoControllerActive,null,{timeout:7000});
+  await p.waitForFunction(()=>window.returned,null,{timeout:60000});
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
+});
+
+test('confirmed documents clear return verification while the chapter retains a pending video',async t=>{
+  const p=await setup(t,{controller:true,remainingVideo:true});
+  await p.waitForFunction(()=>window.returned&&__state.awaitingPlatform===null,null,{timeout:60000});
+  assert.equal(await p.evaluate(()=>__state.sectionPending['1.1']),1);
+  assert.equal(await p.evaluate(()=>__state.platformDone),2);
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
+  assert.notEqual(await p.evaluate(()=>__state.status),'blocked');
 });
 test('reading to the end without a platform mark remains unconfirmed',async t=>{
   const p=await setup(t,{confirm:false});
@@ -54,4 +85,17 @@ test('pause cancels document scrolling throughout nested reader frames',async t=
   await p.waitForTimeout(4500);
   assert.equal(await f.evaluate(()=>document.scrollingElement.scrollTop),before);
   assert.equal(await p.evaluate(()=>reports.at(-1).stage),'idle');
+});
+
+test('reader loading time does not consume the scrolling stall budget',async t=>{
+  const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());const p=await b.newPage();
+  const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="1600"><rect width="200" height="1600" fill="white"/></svg>');
+  await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:r.request().url().includes('/screen/v2/')?`<div class="fileBox"><img src="${image}"></div>`:'<iframe style="width:500px;height:300px" src="https://p.ananas.chaoxing.com/screen/v2/mock-delay"></iframe>'}));
+  await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');const reader=p.frames().find(f=>f.url().includes('/screen/v2/'));await reader.waitForFunction(()=>document.querySelector('img')?.complete);
+  await reader.evaluate(()=>{const realNow=Date.now;window.clockOffset=0;Date.now=()=>realNow()+clockOffset;});await reader.addScriptTag({content:source});
+  await p.evaluate(()=>{window.events=[];addEventListener('message',e=>{if(e.data?.type?.startsWith('xy-document-'))events.push(e.data)});document.querySelector('iframe').contentWindow.postMessage({type:'xy-read-document'},'*');});
+  // Simulate delayed rendering before the first ready-reader poll.
+  await reader.evaluate(()=>{clockOffset=19000});await p.waitForFunction(()=>events.some(e=>e.stage==='browsing'),null,{timeout:5000});
+  await reader.evaluate(()=>{clockOffset=23000});await reader.waitForFunction(()=>document.scrollingElement.scrollTop>0,null,{timeout:5000});
+  assert.equal(await p.evaluate(()=>events.some(e=>e.stage==='stalled')),false);
 });

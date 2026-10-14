@@ -29,6 +29,9 @@
       if(!active)return;
       if(child!==target?.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'))return;
       if(event.data.type==='xy-document-wheel'){
+        // Layout changes or a previously initialized video may have moved
+        // this job outside the main viewport. Re-establish the input target.
+        target.scrollIntoView({block:'center',behavior:'instant'});
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;
@@ -90,8 +93,16 @@
     lastStep=Date.now();
     if(stage==='loading'){
       window.scrollTo({top:0,behavior:'instant'});stage='browsing';
+      // Loading and layout time must not consume the reader's progress budget.
+      lastPosition=root.scrollTop;progressAt=Date.now();
     }else if(root.scrollTop+root.clientHeight>=root.scrollHeight-3){stage='end';}
-    else report({type:'xy-document-wheel',x:innerWidth/2,y:innerHeight/2,amount:Math.max(80,root.clientHeight*.85)});
+    else {
+      const amount=Math.max(80,root.clientHeight*.85);
+      // Keep the enclosing job visible and deliver the platform's normal wheel
+      // input as well; reader scrolling remains independent of input routing.
+      report({type:'xy-document-wheel',x:innerWidth/2,y:innerHeight/2,amount});
+      window.scrollBy({top:amount,behavior:'instant'});
+    }
     report({type:'xy-document-progress',stage});
   },1000);
 })();

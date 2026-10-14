@@ -58,7 +58,12 @@
     const bounds=node.getBoundingClientRect();
     return [...node.querySelectorAll('i,svg,span,[class*=icon]')].some(icon=>{
       const rect=icon.getBoundingClientRect();
-      if(!visible(icon)||rect.width>42||rect.height>42||rect.left>bounds.left+85)return false;
+      if(!visible(icon)||rect.width>42||rect.height>42)return false;
+      // The platform's course catalog puts its explicit completion icon on
+      // the right; generic color heuristics remain limited to the left gutter.
+      if(icon.classList.contains('icon_Completed')||
+        icon.classList.contains('catalog_state')&&icon.classList.contains('icon_yiwanc'))return true;
+      if(rect.left>bounds.left+85)return false;
       const style=getComputedStyle(icon);
       return green(style.color)||green(style.backgroundColor)||green(style.fill)||
         green(style.stroke)||/(?:complete|finish|success|wancheng|yiwancheng)/i.test(String(icon.className));
@@ -77,7 +82,7 @@
       const text=lines.join(' '),quiz=/章节测验/.test(text);
       const raw=clean(node.innerText||'');
       const countMatch=raw.match(/(?:^|\s)(\d{1,3})\s*$/);
-      const pending=countMatch?Number(countMatch[1]):!quiz&&completedCatalogRow(node)?0:null;
+      const pending=!quiz&&completedCatalogRow(node)?0:countMatch?Number(countMatch[1]):null;
       const active=/active|selected|current/i.test(String(node.className))||
         node.getAttribute('aria-current')==='true';
       const existing=found.get(id);
@@ -248,7 +253,10 @@
   }
   const clickNext=async rows=>{
     const body=document.body?.innerText||'';
-    if(!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
+    const section=currentSection(rows);
+    const completedSection=rows.some(row=>row.id===section&&!row.quiz&&row.pending===0);
+    if(completedSection)navigationPending=null;
+    if(!completedSection&&!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
       navigationPending={section:state.currentSection,at:Date.now()};
     if(navigationPending){
       if(Date.now()-navigationPending.at>20000){
@@ -297,13 +305,18 @@
     }
     const reportedCards=localCards.length?localCards:
       targets.length===1?frameData(targets[0])?.cards:null;
-    const explicitVideoComplete=state.currentSection===waiting.section&&taskIndex!==undefined&&
+    const explicitVideoComplete=!waiting.catalogRefreshRequested&&state.currentSection===waiting.section&&taskIndex!==undefined&&
       reportedCards?.[Number(taskIndex)]?.complete===true;
+    const documentIndex=/\/document\/(\d+)$/.exec(waiting.taskId)?.[1];
+    const documentReport=targets.length===1?frameStatus.get(targets[0])?.documentReport:null;
+    const explicitDocumentComplete=state.currentSection===waiting.section&&row&&documentIndex!==undefined&&
+      (waiting.documentConfirmed===true||documentReport&&Date.now()-documentReport.receivedAt<5000&&
+        documentReport.tasks[Number(documentIndex)]?.complete===true);
     const count=platformCount();
     const lastPointWithoutNumber=row&&row.pending===null&&before===1&&count&&
       (Number.isInteger(waiting.platformDoneBefore)?count.done>waiting.platformDoneBefore:
         waiting.section==='1.1'&&waiting.taskId==='1.1/video/1'&&count.done===3);
-    if(explicitVideoComplete||row&&Number.isInteger(before)&&
+    if(explicitVideoComplete||explicitDocumentComplete||row&&Number.isInteger(before)&&
       (Number.isInteger(row.pending)&&row.pending<before||lastPointWithoutNumber)){
       const doneIds=[...new Set([...(state.completedTaskIds||[]),waiting.taskId])];
       await save({awaitingPlatform:null,completedTaskIds:doneIds,currentTask:null,
@@ -324,7 +337,8 @@
       bridge.catalogDiagnostic?.({...catalogDiagnostic(),rows:rows.slice(0,8).map(item=>({
         id:item.id,quiz:item.quiz,pending:item.pending,active:item.active,
         start:item.title.slice(0,90)}))});
-      await block(`${waiting.section} 的视频已结束，但目录任务点未减少`);
+      await block(documentIndex!==undefined?`${waiting.section} 的文档完成尚待平台核对`:
+        `${waiting.section} 的视频已结束，但目录任务点未减少`);
     }
     return true;
   }
@@ -346,7 +360,8 @@
       const link=back?.closest('a,button,[role=button]')||back?.parentElement;
       if(!link&&!bridge.returnToCourse){await block('文档已浏览，但未找到返回课程入口以核对任务点');return true;}
       await save({awaitingPlatform:{section:id,taskId:state.currentTask,
-        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,returnedAt:now()}});
+        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,
+        documentConfirmed:true,returnedAt:now()}});
       if(bridge.returnToCourse)void bridge.returnToCourse().catch(()=>{});
       else link.click();
       return true;
@@ -358,7 +373,12 @@
     }
     const taskId=`${id}/document/${index}`;
     if(state.currentTask!==taskId)await save({currentTask:taskId,lastObservedAt:now()});
-    if(report.stage==='idle')target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    if(report.stage==='idle'){
+      // Both drivers share the chapter frame. Stop its video driver before
+      // starting the reader so video initialization cannot scroll it away.
+      target.contentWindow.postMessage({type:'xy-pause'},'*');
+      target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    }
     return true;
   }
   async function processVideo(rows){
@@ -401,9 +421,13 @@
       return true;
     }
     if(remoteMode){
-      for(const [position,card] of remoteCards.entries())
+      for(const [position,card] of remoteCards.entries()){
+        if(card.evidence==='job-marker'&&!card.complete&&confirmedPending>0)
+          doneIds.delete(`${id}/video/${position}`);
         if(card.complete)doneIds.add(`${id}/video/${position}`);
-      if(doneIds.size>(state.completedTaskIds||[]).length)
+      }
+      if(doneIds.size!==(state.completedTaskIds||[]).length||
+        (state.completedTaskIds||[]).some(task=>!doneIds.has(task)))
         await save({completedTaskIds:[...doneIds],lastObservedAt:now()});
     }else if(cardMode){
       for(const [position,card] of cards.entries())
@@ -432,8 +456,16 @@
         !doneIds.has(`${id}/video/${position}`));
     if(index<0){
       if(Number.isInteger(confirmedPending)&&confirmedPending>0){
-        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         const documents=frameData(videos[0])?.pendingDocuments;
+        if(remoteMode&&documents===0&&remoteCards.every(card=>card.complete&&card.evidence==='job-marker')&&bridge.returnToCourse){
+          const finishedTask=new RegExp(`^${id.replace('.', '\\.')}\\/video\\/\\d+$`).test(state.currentTask||'')?
+            state.currentTask:`${id}/video/${remoteCards.length-1}`;
+          await save({currentTask:finishedTask,awaitingPlatform:{section:id,taskId:finishedTask,
+            pendingBefore:confirmedPending,platformDoneBefore:count?.done??state.platformDone,
+            catalogRefreshRequested:true,returnedAt:now()}});
+          void bridge.returnToCourse().catch(()=>{});return true;
+        }
+        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         await block(Number.isInteger(documents)&&documents>0?
           `本节视频已完成，剩余 ${documents} 份文档任务；请展开课程阅读，完成后恢复`:
           '目录仍有未完成任务点，但当前页面未找到待播放卡片');
