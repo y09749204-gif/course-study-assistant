@@ -96,7 +96,7 @@
       // Loading and layout time must not consume the reader's progress budget.
       lastPosition=root.scrollTop;progressAt=Date.now();
     }else if(root.scrollTop+root.clientHeight>=root.scrollHeight-3){stage='end';}
-    else window.scrollBy({top:Math.max(80,root.clientHeight*.85),behavior:'smooth'});
+    else window.scrollBy({top:Math.max(80,root.clientHeight*.85),behavior:'instant'});
     report({type:'xy-document-progress',stage});
   },1000);
 })();
