@@ -127,7 +127,8 @@ function runContent(){
       if(!visible(icon)||rect.width>42||rect.height>42)return false;
       // The platform's course catalog puts its explicit completion icon on
       // the right; generic color heuristics remain limited to the left gutter.
-      if(icon.classList.contains('icon_Completed'))return true;
+      if(icon.classList.contains('icon_Completed')||
+        icon.classList.contains('catalog_state')&&icon.classList.contains('icon_yiwanc'))return true;
       if(rect.left>bounds.left+85)return false;
       const style=getComputedStyle(icon);
       return green(style.color)||green(style.backgroundColor)||green(style.fill)||
@@ -318,7 +319,10 @@ function runContent(){
   }
   const clickNext=async rows=>{
     const body=document.body?.innerText||'';
-    if(!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
+    const section=currentSection(rows);
+    const completedSection=rows.some(row=>row.id===section&&!row.quiz&&row.pending===0);
+    if(completedSection)navigationPending=null;
+    if(!completedSection&&!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
       navigationPending={section:state.currentSection,at:Date.now()};
     if(navigationPending){
       if(Date.now()-navigationPending.at>20000){

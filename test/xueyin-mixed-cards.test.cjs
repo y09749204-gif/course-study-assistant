@@ -73,3 +73,21 @@ for(const completion of ['count','right-icon'])test(`finished video jobs refresh
   assert.equal(await p.evaluate(()=>s.platformDone),completion==='count'?3:2);
   assert.deepEqual(await p.evaluate(()=>s.completedTaskIds),['1.1/video/0']);
 });
+
+for(const marker of ['icon_Completed','catalog_state icon_yiwanc'])test(`completed detail with ${marker} advances while unfinished detail waits for media`,async t=>{
+  const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
+  for(const complete of [false,true]){
+    const p=await b.newPage();t.after(()=>p.close());
+    await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:`<div>章节详情 返回课程</div><div>已完成任务点 ${complete?1:0}/2</div><ul><li class="active" style="width:700px;height:40px">1.1 模拟课程 ${complete?`<span class="${marker}" style="display:inline-block;width:20px;height:20px;margin-left:400px"></span>`:'<span>1</span>'}</li><li id="next" style="width:700px;height:40px">1.2 模拟课程 <span>1</span></li></ul>`}));
+    await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+    await p.evaluate(complete=>{
+      window.nextClicked=false;document.querySelector('#next').onclick=()=>{nextClicked=true};
+      window.s={status:'running',currentSection:'1.1',currentTask:null,sectionPending:{'1.1':complete?0:1},completedTaskIds:[],submittedQuizzes:[],quizStatuses:{},pageDiagnostics:{}};
+      window.XyBridge={state:async()=>structuredClone(s),update:async patch=>Object.assign(s,patch),notify:async()=>{},onCommand:()=>{},catalogDiagnostic:()=>{},report:()=>{}};
+      const realNow=Date.now;window.clockOffset=0;Date.now=()=>realNow()+clockOffset;
+    },complete);
+    await p.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8')});
+    if(complete){await p.waitForFunction(()=>nextClicked,null,{timeout:7000});assert.equal(await p.evaluate(()=>s.currentSection),'1.2');}
+    else{await p.waitForTimeout(1200);await p.evaluate(()=>{clockOffset=21000});await p.waitForFunction(()=>s.status==='blocked',null,{timeout:5000});assert.equal(await p.evaluate(()=>nextClicked),false);assert.match(await p.evaluate(()=>s.blockedReason),/加载超过/);}
+  }
+});
