@@ -58,7 +58,11 @@
     const bounds=node.getBoundingClientRect();
     return [...node.querySelectorAll('i,svg,span,[class*=icon]')].some(icon=>{
       const rect=icon.getBoundingClientRect();
-      if(!visible(icon)||rect.width>42||rect.height>42||rect.left>bounds.left+85)return false;
+      if(!visible(icon)||rect.width>42||rect.height>42)return false;
+      // The platform's course catalog puts its explicit completion icon on
+      // the right; generic color heuristics remain limited to the left gutter.
+      if(icon.classList.contains('icon_Completed'))return true;
+      if(rect.left>bounds.left+85)return false;
       const style=getComputedStyle(icon);
       return green(style.color)||green(style.backgroundColor)||green(style.fill)||
         green(style.stroke)||/(?:complete|finish|success|wancheng|yiwancheng)/i.test(String(icon.className));
@@ -77,7 +81,7 @@
       const text=lines.join(' '),quiz=/章节测验/.test(text);
       const raw=clean(node.innerText||'');
       const countMatch=raw.match(/(?:^|\s)(\d{1,3})\s*$/);
-      const pending=countMatch?Number(countMatch[1]):!quiz&&completedCatalogRow(node)?0:null;
+      const pending=!quiz&&completedCatalogRow(node)?0:countMatch?Number(countMatch[1]):null;
       const active=/active|selected|current/i.test(String(node.className))||
         node.getAttribute('aria-current')==='true';
       const existing=found.get(id);

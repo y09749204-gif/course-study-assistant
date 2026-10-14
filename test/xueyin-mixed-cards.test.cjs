@@ -54,22 +54,22 @@ test('live unfinished video marker repairs a stale local claim while preserving 
   assert.deepEqual(await p.evaluate(()=>({status:s.status,done:s.platformDone,total:s.platformTotal,ids:s.completedTaskIds})),{status:'running',done:2,total:3,ids:['1.1/document/0','1.1/document/1']});
 });
 
-test('finished video jobs refresh the catalog once instead of blocking on its stale pending badge',async t=>{
+for(const completion of ['count','right-icon'])test(`finished video jobs refresh the catalog once and accept ${completion} confirmation`,async t=>{
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());const p=await b.newPage();
   await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:r.request().url().includes('/knowledge/cards')?
     '<div class="ans-attach-ct ans-job-finished"><video style="width:400px;height:250px"></video></div>':
     '<div id="count">已完成任务点 2/4</div><ul><li class="active" style="width:700px;height:40px">1.1 视频 <span id="pending">1</span></li><li id="next" style="width:700px;height:40px">1.2 视频 <span>1</span></li></ul><iframe id="cards" style="width:700px;height:650px" src="https://mooc1.chaoxing.com/mooc-ans/knowledge/cards"></iframe>'}));
   await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');const card=p.frames().find(f=>f.url().includes('/knowledge/cards'));await card.waitForSelector('video');await card.addScriptTag({content:source});
-  await p.evaluate(()=>{
+  await p.evaluate(completion=>{
     window.returns=0;window.nextClicked=false;window.s={status:'running',currentSection:'1.1',currentTask:'1.1/video/0',sectionPending:{'1.1':1},platformDone:2,platformTotal:4,completedTaskIds:[],submittedQuizzes:[],quizStatuses:{},pageDiagnostics:{}};
     document.querySelector('#next').onclick=()=>{nextClicked=true;};
-    window.XyBridge={state:async()=>structuredClone(s),update:async patch=>Object.assign(s,patch),notify:async()=>{},onCommand:()=>{},catalogDiagnostic:()=>{},report:()=>{},returnToCourse:async()=>{returns++;document.querySelector('#pending').textContent='0';document.querySelector('#count').textContent='已完成任务点 3/4';document.querySelector('#cards').remove();}};
-  });
+    window.XyBridge={state:async()=>structuredClone(s),update:async patch=>Object.assign(s,patch),notify:async()=>{},onCommand:()=>{},catalogDiagnostic:()=>{},report:()=>{},returnToCourse:async()=>{returns++;if(completion==='count'){document.querySelector('#pending').textContent='0';document.querySelector('#count').textContent='已完成任务点 3/4';}else{document.querySelector('#pending').outerHTML='<span class="icon_Completed" style="display:inline-block;width:20px;height:20px;margin-left:500px"></span>';}document.querySelector('#cards').remove();}};
+  },completion);
   await p.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8')});
   await p.waitForFunction(()=>nextClicked,null,{timeout:9000});
   assert.equal(await p.evaluate(()=>returns),1);
   assert.equal(await p.evaluate(()=>s.currentSection),'1.2');
   assert.equal(await p.evaluate(()=>s.awaitingPlatform),null);
-  assert.equal(await p.evaluate(()=>s.platformDone),3);
+  assert.equal(await p.evaluate(()=>s.platformDone),completion==='count'?3:2);
   assert.deepEqual(await p.evaluate(()=>s.completedTaskIds),['1.1/video/0']);
 });
