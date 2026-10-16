@@ -229,7 +229,8 @@
     const text=(dialog.innerText||'').replace(typePattern,match=>match.replace(/\s+/g,''));
     const lines = text.split('\n').map(x=>x.trim()).filter(Boolean);
     const marker = lines.findIndex(x => typePattern.test(x));
-    if (marker < 0 || /多选/.test(lines[marker])) {diagnose(marker<0?'missing-type':'unsupported-type');return null;}
+    if (marker < 0) {diagnose('missing-type');return null;}
+    const type=/多选/.test(lines[marker])?'multi':'single';
     const typeMatch=typePattern.exec(lines[marker]);
     const inlineQuestion=lines[marker].slice(typeMatch.index+typeMatch[0].length).trim();
     const question = inlineQuestion || lines.slice(marker + 1).find(x => x && !/^[A-H](?:\s|[.、]|$)/.test(x));
@@ -275,7 +276,7 @@
       diagnose(!question?'missing-question':'invalid-option-count',options.length,controls.length);return null;
     }
     diagnose('recognized',options.length,controls.length);
-    return {question,options};
+    return {question,options,type};
   }
   async function save(force = false) {
     if (!state || (!force && Date.now() - lastSave < 5000)) return;
@@ -297,7 +298,7 @@
       return block('弹题题型或选项无法识别');
     }
     quizParseSince=null;quizParseDialog=null;
-    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({question:data.question,options:data.options.map(x=>x.text)})));
+    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({...(data.type==='multi'?{type:'multi'}:{}),question:data.question,options:data.options.map(x=>x.text)})));
     const context={lessonId:lessons().find(item=>item.active)?.id||state.currentLesson,
       key:Array.from(new Uint8Array(bytes),byte=>byte.toString(16).padStart(2,'0')).join('')};
     if(state.submissionIntent&&state.submissionContext&&
@@ -306,8 +307,23 @@
     }
     if(state.submissionIntent)return block('弹题提交结果未确认，请人工核对后恢复');
     let answer;
-    try {answer = await chrome.runtime.sendMessage({type:'ANSWER',question:data.question,
+    try {answer = await chrome.runtime.sendMessage({type:'ANSWER',questionType:data.type,question:data.question,
       options:data.options.map(x=>x.text.slice(1).trim())});} catch {answer = null;}
+    if(data.type==='multi'){
+      const indices=answer?.type==='multi'?answer.answer:null;
+      if(!Array.isArray(indices)||!indices.length||new Set(indices).size!==indices.length||
+        !indices.every(index=>Number.isInteger(index)&&index>=0&&index<data.options.length))
+        return block('多选弹题 AI 答案未确认，请人工核对后恢复');
+      const selected=new Set(indices);
+      for(const [index,option] of data.options.entries()){
+        const wanted=selected.has(index);
+        if(choiceSelected(option.node)!==wanted)await clickTarget(option.node,'quiz-option');
+        if(!await confirmAction('quiz-option',()=>choiceSelected(option.node)===wanted))
+          return block('弹题选项未获平台确认，请人工核对');
+      }
+      if(data.options.some((option,index)=>choiceSelected(option.node)!==selected.has(index)))
+        return block('多选弹题勾选结果不一致，请人工核对');
+    }else{
     let index = answer?.index;
     if (!Number.isInteger(index) || index < 0 || index >= data.options.length) {
       index=data.options.findIndex(option=>choiceSelected(option.node));
@@ -322,6 +338,7 @@
     if(!choiceSelected(choice))await clickTarget(choice,'quiz-option');
     if(!await confirmAction('quiz-option',()=>choiceSelected(choice)))
       return block('弹题选项未获平台确认，请人工核对');
+    }
     const submit = [...dialog.querySelectorAll('button,[role=button]')]
       .find(node => visible(node) && /提交作答/.test(node.innerText || ''));
     if (!submit || submit.disabled) return block('弹题提交按钮不可用');
