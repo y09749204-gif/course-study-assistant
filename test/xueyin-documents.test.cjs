@@ -99,3 +99,22 @@ test('reader loading time does not consume the scrolling stall budget',async t=>
   await reader.evaluate(()=>{clockOffset=23000});await reader.waitForFunction(()=>document.scrollingElement.scrollTop>0,null,{timeout:5000});
   assert.equal(await p.evaluate(()=>events.some(e=>e.stage==='stalled')),false);
 });
+
+for(const recover of [true,false])test(`lazy reader image after a long session ${recover?'recovers without a false timeout':'still times out when continuously unavailable'}`,async t=>{
+  const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());const p=await b.newPage();
+  const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="3000"><rect width="200" height="3000" fill="white"/></svg>');
+  await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:r.request().url().includes('/screen/v2/')?`<div class="fileBox"><img src="${image}"></div>`:'<iframe style="width:500px;height:300px" src="https://p.ananas.chaoxing.com/screen/v2/mock-lazy"></iframe>'}));
+  await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');const reader=p.frames().find(f=>f.url().includes('/screen/v2/'));await reader.waitForFunction(()=>document.querySelector('img')?.complete);
+  await reader.evaluate(()=>{const realNow=Date.now;window.clockOffset=0;Date.now=()=>realNow()+clockOffset;window.imageReady=true;Object.defineProperty(document.querySelector('img'),'complete',{get:()=>imageReady});});
+  await reader.addScriptTag({content:source});
+  await p.evaluate(()=>{window.events=[];addEventListener('message',e=>{if(e.data?.type==='xy-document-progress')events.push(e.data.stage)});document.querySelector('iframe').contentWindow.postMessage({type:'xy-read-document'},'*');});
+  await p.waitForFunction(()=>events.includes('browsing'),null,{timeout:5000});
+  await reader.evaluate(()=>{imageReady=false;clockOffset=25000;});await p.waitForTimeout(1300);
+  assert.equal(await p.evaluate(()=>events.includes('unsupported')),false);
+  if(recover){
+    await reader.evaluate(()=>{imageReady=true;clockOffset=30000;});await reader.waitForFunction(()=>document.scrollingElement.scrollTop>0,null,{timeout:5000});
+    assert.equal(await p.evaluate(()=>events.some(s=>['unsupported','stalled'].includes(s))),false);
+  }else{
+    await reader.evaluate(()=>{clockOffset=50000;});await p.waitForFunction(()=>events.includes('unsupported'),null,{timeout:5000});
+  }
+});
