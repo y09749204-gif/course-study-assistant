@@ -35,7 +35,7 @@ const nextSix=()=>{
 };
 
 const {previewLayout,inputPoint}=require('./course-preview.cjs');
-function createZhihuishuStudy({WebContentsView,hostWindow,ipcMain,Notification,safeStorage,data,answer,trusted,courseSession,claimCourse,backgroundInput=false,profile=null}){
+function createZhihuishuStudy({WebContentsView,hostWindow,ipcMain,Notification,safeStorage,data,answer,answerTyped,trusted,courseSession,claimCourse,backgroundInput=false,profile=null}){
   const C=BaseCore.create(profile);
   const courseLabel=profile?.name||'智慧树课程';
   const isCourse=url=>coursePage(url,C.COURSE_ID);
@@ -426,7 +426,9 @@ function createZhihuishuStudy({WebContentsView,hostWindow,ipcMain,Notification,s
       return {resumed:true};
     }
     if(message.type==='NOTIFY'){notice(String(message.message||'').slice(0,180));return {ok:true};}
-    if(message.type==='ANSWER')return answer({question:message.question,options:message.options});
+    if(message.type==='ANSWER')return message.questionType==='multi'?
+      answerTyped?.({type:'multi',question:message.question,options:message.options})||{error:'unsupported-type'}:
+      answer({question:message.question,options:message.options});
     throw Error('Invalid message');
   });
   checkDue();schedule();
