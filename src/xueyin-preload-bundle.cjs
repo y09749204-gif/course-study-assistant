@@ -1393,7 +1393,7 @@ function runDocumentFrame(){
   const wrapper=location.pathname==='/ananas/modules/pdf/index.html';
   const reader=location.pathname.startsWith('/screen/v2/');
   if(!chapter&&!wrapper&&!reader)return;
-  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0;
+  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0,resourceWaitSince=null;
   const tasks=()=>[...document.querySelectorAll('.ans-attach-ct')].filter(e=>
     e.querySelector('.ans-job-icon')&&e.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'));
   const complete=e=>e.classList.contains('ans-job-finished');
@@ -1408,7 +1408,7 @@ function runDocumentFrame(){
     if(event.source===parent){
       if(event.data?.type==='xy-pause'){stop();return;}
       if(event.data?.type!=='xy-read-document')return;
-      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();}
+      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;}
       return;
     }
     if(!['xy-document-progress','xy-document-wheel'].includes(event.data?.type))return;
@@ -1473,9 +1473,11 @@ function runDocumentFrame(){
     const images=[...document.querySelectorAll('.fileBox img')];
     const root=document.scrollingElement;
     if(!root||!images.length||images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;}).some(e=>!e.complete||e.naturalWidth===0)){
-      if(Date.now()-startedAt>20000)report({type:'xy-document-progress',stage:'unsupported'});
+      if(resourceWaitSince===null)resourceWaitSince=Date.now();
+      if(Date.now()-resourceWaitSince>20000)report({type:'xy-document-progress',stage:'unsupported'});
       return;
     }
+    if(resourceWaitSince!==null){resourceWaitSince=null;progressAt=Date.now();}
     if(root.scrollTop!==lastPosition){lastPosition=root.scrollTop;progressAt=Date.now();}
     if(stage==='browsing'&&Date.now()-progressAt>20000){report({type:'xy-document-progress',stage:'stalled'});return;}
     if(Date.now()-lastStep<3000)return;
