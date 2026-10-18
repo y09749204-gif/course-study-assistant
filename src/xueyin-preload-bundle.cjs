@@ -282,7 +282,8 @@ function runContent(){
       if(event.data.type==='xy-document-status'){
         const tasks=event.data.tasks;
         if(!Array.isArray(tasks)||tasks.length>64||!tasks.every(t=>typeof t?.complete==='boolean'))return;
-        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,receivedAt:Date.now()}});
+        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,
+          reason:['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'].includes(event.data.reason)?event.data.reason:null,receivedAt:Date.now()}});
         return;
       }
       frameStatus.set(frame,{...(event.data.type==='xy-card-status'?prior:{}),...event.data,
@@ -449,8 +450,11 @@ function runContent(){
       return true;
     }
     if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
-      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,index,total:report.tasks.length}});
-      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?'文档阅读器未加载或不支持，请展开课程检查':
+      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,reason:report.reason,index,total:report.tasks.length}});
+      const loadingFailure=report.reason==='resource-timeout'?'文档当前页图片加载超过 20 秒，请检查网络后恢复':
+        ['reader-frame-timeout','chapter-frame-timeout'].includes(report.reason)?'文档阅读器超过 20 秒没有响应，请刷新课程后恢复':
+        '文档阅读器未加载或不支持，请展开课程检查';
+      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?loadingFailure:
         '文档已浏览至末页，但平台未确认完成；请展开课程核对');return true;
     }
     const taskId=`${id}/document/${index}`;
@@ -1415,14 +1419,15 @@ function runDocumentFrame(){
   const wrapper=location.pathname==='/ananas/modules/pdf/index.html';
   const reader=location.pathname.startsWith('/screen/v2/');
   if(!chapter&&!wrapper&&!reader)return;
-  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0,resourceWaitSince=null;
+  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0,resourceWaitSince=null,childReportAt=0,reason=null;
+  const reasons=['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'];
   const tasks=()=>[...document.querySelectorAll('.ans-attach-ct')].filter(e=>
     e.querySelector('.ans-job-icon')&&e.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'));
   const complete=e=>e.classList.contains('ans-job-finished');
   const send=(frame,data)=>{try{frame?.contentWindow.postMessage(data,'*');}catch{}};
   const report=data=>{try{parent.postMessage(data,'*');}catch{}};
   const stop=()=>{
-    active=false;stage='idle';
+    active=false;stage='idle';reason=null;
     for(const f of document.querySelectorAll('iframe'))send(f,{type:'xy-pause'});
   };
   addEventListener('message',event=>{
@@ -1430,12 +1435,14 @@ function runDocumentFrame(){
     if(event.source===parent){
       if(event.data?.type==='xy-pause'){stop();return;}
       if(event.data?.type!=='xy-read-document')return;
-      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;}
+      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;childReportAt=0;reason=null;}
       return;
     }
     if(!['xy-document-progress','xy-document-wheel'].includes(event.data?.type))return;
     const child=[...document.querySelectorAll('iframe')].find(f=>f.contentWindow===event.source);
     if(!child)return;
+    if(event.data.type==='xy-document-progress'&&
+      !['loading','browsing','end','unsupported','unconfirmed','stalled'].includes(event.data.stage))return;
     if(chapter){
       if(!active)return;
       if(child!==target?.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'))return;
@@ -1446,16 +1453,19 @@ function runDocumentFrame(){
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;
+      childReportAt=Date.now();reason=reasons.includes(event.data.reason)?event.data.reason:null;
       if(['unsupported','unconfirmed','stalled'].includes(childStage))stage=childStage;
       else if(childStage==='end'&&stage!=='waiting'){stage='waiting';startedAt=Date.now();}
       else if(childStage==='browsing')stage='browsing';
+      else if(childStage==='loading')stage='loading';
     }else if(wrapper){
       if(!active||child!==target)return;
       if(event.data.type==='xy-document-wheel'){
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;
-      report({type:'xy-document-progress',stage:childStage});
+      childReportAt=Date.now();reason=reasons.includes(event.data.reason)?event.data.reason:null;
+      report({type:'xy-document-progress',stage:childStage,reason});
     }
   });
   setInterval(()=>{
@@ -1465,19 +1475,19 @@ function runDocumentFrame(){
         if(!next){send(target?.querySelector('iframe'),{type:'xy-pause'});stage='complete';active=false;}
         else if(next!==target){
           if(target)send(target.querySelector('iframe'),{type:'xy-pause'});
-          target=next;stage='loading';childStage=null;startedAt=Date.now();
+          target=next;stage='loading';childStage=null;startedAt=Date.now();childReportAt=0;reason=null;
           target.scrollIntoView({block:'center',behavior:'instant'});
           send(target.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'),{type:'xy-read-document'});
         }else if(stage==='loading'){
           send(target.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'),{type:'xy-read-document'});
-          if(Date.now()-startedAt>20000)stage='unsupported';
         }else if(stage==='waiting'&&Date.now()-startedAt>15000)stage='unconfirmed';
+        if(next&&Date.now()-Math.max(startedAt,childReportAt)>20000){stage='unsupported';reason='chapter-frame-timeout';}
       }
       if(active&&['unsupported','unconfirmed','stalled'].includes(stage)){
         active=false;send(target?.querySelector('iframe'),{type:'xy-pause'});
       }
       report({type:'xy-document-status',stage,tasks:list.map(e=>({complete:complete(e)})),
-        index:target?list.indexOf(target):null});
+        index:target?list.indexOf(target):null,reason});
       return;
     }
     if(!active)return;
@@ -1487,8 +1497,12 @@ function runDocumentFrame(){
         try{return r.width>=260&&r.height>=150&&official(new URL(f.src,location.href).origin);}catch{return false;}
       });
       const frame=candidates.length===1?candidates[0]:null;
-      if(frame){target=frame;send(frame,{type:'xy-read-document'});}
-      if(!childStage&&Date.now()-startedAt>20000)report({type:'xy-document-progress',stage:'unsupported'});
+      if(frame){
+        if(frame!==target){target=frame;childStage=null;childReportAt=0;}
+        send(frame,{type:'xy-read-document'});
+      }
+      if(Date.now()-Math.max(startedAt,childReportAt)>20000)
+        report({type:'xy-document-progress',stage:'unsupported',reason:'reader-frame-timeout'});
       return;
     }
     // Use the reader's real scrolling surface; its own scroll handlers report progress.
@@ -1496,7 +1510,9 @@ function runDocumentFrame(){
     const root=document.scrollingElement;
     if(!root||!images.length||images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;}).some(e=>!e.complete||e.naturalWidth===0)){
       if(resourceWaitSince===null)resourceWaitSince=Date.now();
-      if(Date.now()-resourceWaitSince>20000)report({type:'xy-document-progress',stage:'unsupported'});
+      const timedOut=Date.now()-resourceWaitSince>20000;
+      report({type:'xy-document-progress',stage:timedOut?'unsupported':'loading',
+        reason:timedOut?'resource-timeout':'resource-loading'});
       return;
     }
     if(resourceWaitSince!==null){resourceWaitSince=null;progressAt=Date.now();}

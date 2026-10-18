@@ -215,7 +215,8 @@
       if(event.data.type==='xy-document-status'){
         const tasks=event.data.tasks;
         if(!Array.isArray(tasks)||tasks.length>64||!tasks.every(t=>typeof t?.complete==='boolean'))return;
-        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,receivedAt:Date.now()}});
+        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,
+          reason:['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'].includes(event.data.reason)?event.data.reason:null,receivedAt:Date.now()}});
         return;
       }
       frameStatus.set(frame,{...(event.data.type==='xy-card-status'?prior:{}),...event.data,
@@ -382,8 +383,11 @@
       return true;
     }
     if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
-      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,index,total:report.tasks.length}});
-      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?'文档阅读器未加载或不支持，请展开课程检查':
+      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,reason:report.reason,index,total:report.tasks.length}});
+      const loadingFailure=report.reason==='resource-timeout'?'文档当前页图片加载超过 20 秒，请检查网络后恢复':
+        ['reader-frame-timeout','chapter-frame-timeout'].includes(report.reason)?'文档阅读器超过 20 秒没有响应，请刷新课程后恢复':
+        '文档阅读器未加载或不支持，请展开课程检查';
+      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?loadingFailure:
         '文档已浏览至末页，但平台未确认完成；请展开课程核对');return true;
     }
     const taskId=`${id}/document/${index}`;
