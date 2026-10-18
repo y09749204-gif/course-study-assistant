@@ -254,6 +254,12 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
       start:String(item.start||'').slice(0,90),
     })):[];
     update({pageDiagnostics:{...(read().pageDiagnostics||{}),catalog:{
+      documentReading:detail.documentReading?{
+        stage:['idle','loading','browsing','waiting','complete','unsupported','unconfirmed','stalled'].includes(detail.documentReading.stage)?detail.documentReading.stage:null,
+        reason:['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'].includes(detail.documentReading.reason)?detail.documentReading.reason:null,
+        index:Number.isInteger(detail.documentReading.index)?Math.min(63,Math.max(0,detail.documentReading.index)):null,
+        total:Number.isInteger(detail.documentReading.total)?Math.min(64,Math.max(0,detail.documentReading.total)):null,
+      }:null,
       candidateCount:Number(detail.candidateCount)||0,sectionInBody:!!detail.sectionInBody,
       iframeCount:Number(detail.iframeCount)||0,videoCount:Number(detail.videoCount)||0,
       iframes:Array.isArray(detail.iframes)?detail.iframes.slice(0,4).map(item=>({

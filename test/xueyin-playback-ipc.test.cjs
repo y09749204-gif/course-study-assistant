@@ -100,6 +100,8 @@ test('course iframe diagnostics and document wheel input enforce source, status 
   handlers.get('xy-state-update')(rootEvent,{awaitingPlatform:{section:'1.1',taskId:'1.1/quiz/0'}});
   assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,false);
 
+  listeners.get('xy-catalog-diagnostic')(rootEvent,{documentReading:{stage:'unsupported',reason:'reader-frame-timeout',index:0,total:2,question:'not diagnostic data'}});
+  assert.deepEqual(controller.status().pageDiagnostics.catalog.documentReading,{stage:'unsupported',reason:'reader-frame-timeout',index:0,total:2});
   const stateFile=path.join(data,'xueyin-study','state.json');
   handlers.get('xy-state-update')(rootEvent,{status:'running',currentIsQuiz:false,currentSection:'1.1',currentTask:'1.1/video/0',awaitingPlatform:null,submissionIntent:null});
   const recovery={taskId:'1.1/video/0',positionSeconds:25};

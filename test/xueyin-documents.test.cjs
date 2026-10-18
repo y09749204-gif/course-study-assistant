@@ -2,7 +2,7 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {chromium}=require('playwright-core');
 const source=fs.readFileSync(path.join(__dirname,'../src/xueyin-document-frame.cjs'),'utf8');
 const content=fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8');
-async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false,staleVideoIntent=false}={}){
+async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false,staleVideoIntent=false,delayedReader=false}={}){
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
   const p=await b.newPage();
   const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="340"><rect width="280" height="340" fill="white"/></svg>');
@@ -49,6 +49,10 @@ async function setup(t,{confirm=true,controller=false,videoRace=false,remainingV
     __state.awaitingPlatform={section:'1.1',taskId:'1.1/video/0',pendingBefore:3,platformDoneBefore:0,catalogRefreshRequested:true,returnedAt:new Date().toISOString()};
     __state.submittedQuizzes=['0.5'];
   });
+  if(delayedReader){
+    const reader=p.frames().find(f=>f.url().endsWith('/mock-1'));
+    await reader.evaluate(()=>{window.imageReady=false;for(const image of document.querySelectorAll('img'))Object.defineProperty(image,'complete',{get:()=>imageReady});});
+  }
   if(controller)await p.addScriptTag({content});
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
   return p;
@@ -138,4 +142,33 @@ test('live unfinished tasks replace stale completion intent and resume document 
   assert.deepEqual(await p.evaluate(()=>__state.submittedQuizzes),['0.5']);
   assert.equal(await p.evaluate(()=>__state.platformDone),2);
   assert.notEqual(await p.evaluate(()=>__state.status),'blocked');
+});
+
+
+test('loading heartbeats keep both outer frames alive while the current reader loads',async t=>{
+  const p=await setup(t,{controller:true,delayedReader:true});
+  await p.waitForFunction(()=>reports.some(r=>r.reason==='resource-loading'),null,{timeout:7000});
+  const ancestors=p.frames().filter(f=>f.url().includes('/knowledge/cards')||f.url().includes('/pdf/'));
+  for(const f of ancestors)await f.evaluate(()=>{const realNow=Date.now;window.offset=0;Date.now=()=>realNow()+offset;});
+  for(let i=1;i<=6;i++){
+    for(const f of ancestors)await f.evaluate(value=>{offset=value;},i*5000);
+    await p.waitForTimeout(1200);
+    assert.notEqual(await p.evaluate(()=>__state.status),'blocked');
+  }
+  const reader=p.frames().find(f=>f.url().endsWith('/mock-1'));
+  await reader.evaluate(()=>{imageReady=true;});
+  await p.waitForFunction(()=>window.returned,null,{timeout:60000});
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['1.1/document/0','1.1/document/1']);
+});
+
+test('a reader removed after its loading heartbeat still times out',async t=>{
+  const p=await setup(t,{controller:true,delayedReader:true});
+  await p.waitForFunction(()=>reports.some(r=>r.reason==='resource-loading'),null,{timeout:7000});
+  const reader=p.frames().find(f=>f.url().endsWith('/mock-1'));
+  const element=await reader.frameElement();await element.evaluate(node=>node.remove());
+  for(const f of p.frames().filter(f=>f.url().includes('/knowledge/cards')||f.url().includes('/pdf/')))
+    await f.evaluate(()=>{const realNow=Date.now;Date.now=()=>realNow()+25000;});
+  await p.waitForFunction(()=>__state.status==='blocked',null,{timeout:6000});
+  assert.ok(await p.evaluate(()=>reports.some(r=>r.stage==='unsupported'&&['reader-frame-timeout','chapter-frame-timeout'].includes(r.reason))));
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),[]);
 });
