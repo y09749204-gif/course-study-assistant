@@ -2,14 +2,14 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const {chromium}=require('playwright-core');
 const source=fs.readFileSync(path.join(__dirname,'../src/xueyin-document-frame.cjs'),'utf8');
 const content=fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8');
-async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false}={}){
+async function setup(t,{confirm=true,controller=false,videoRace=false,remainingVideo=false,staleVideoIntent=false}={}){
   const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());
   const p=await b.newPage();
   const image='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="280" height="340"><rect width="280" height="340" fill="white"/></svg>');
   await p.route('**/*',r=>{
     const url=new URL(r.request().url());let body;
     if(url.pathname==='/blank')body='<html></html>';
-    else if(url.pathname==='/mooc-ans/knowledge/cards')body=`${[1,2].map(i=>`<div class="ans-attach-ct"><div class="ans-job-icon">Task</div><iframe style="width:500px;height:280px" src="https://mooc1.chaoxing.com/ananas/modules/pdf/index.html?mock=${i}"></iframe></div>`).join('')}<script>setInterval(()=>parent.postMessage({type:'xy-video-status',currentTime:100,duration:100,paused:true,ended:true,cards:[{complete:true,hasMedia:true}],pendingDocuments:document.querySelectorAll('.ans-attach-ct:not(.ans-job-finished)').length},'*'),400);addEventListener('message',e=>{if(e.data?.type!=='mock-platform-read')return;const f=[...document.querySelectorAll('iframe')].find(f=>f.contentWindow===e.source);f?.closest('.ans-attach-ct').classList.add('ans-job-finished');});</script>`;
+    else if(url.pathname==='/mooc-ans/knowledge/cards')body=`${[1,2].map(i=>`<div class="ans-attach-ct"><div class="ans-job-icon">Task</div><iframe style="width:500px;height:280px" src="https://mooc1.chaoxing.com/ananas/modules/pdf/index.html?mock=${i}"></iframe></div>`).join('')}<script>setInterval(()=>parent.postMessage({type:'xy-video-status',currentTime:100,duration:100,paused:true,ended:true,cards:[{complete:${!staleVideoIntent},hasMedia:true${staleVideoIntent?",evidence:'job-marker'":''}}],pendingDocuments:document.querySelectorAll('.ans-attach-ct:not(.ans-job-finished)').length},'*'),400);addEventListener('message',e=>{if(e.data?.type!=='mock-platform-read')return;const f=[...document.querySelectorAll('iframe')].find(f=>f.contentWindow===e.source);f?.closest('.ans-attach-ct').classList.add('ans-job-finished');});</script>`;
     else if(url.pathname.includes('/pdf/'))body=`<iframe style="width:480px;height:260px" src="https://mooc1.chaoxing.com/blank"></iframe><script>const readerFrame=document.querySelector('iframe');readerFrame.onload=()=>{if(!window.redirected){window.redirected=true;readerFrame.contentWindow.location.href='https://p.ananas.chaoxing.com/screen/v2/mock-${url.searchParams.get('mock')}';}};addEventListener('message',e=>{if(e.data?.type==='mock-platform-read'&&e.source===document.querySelector('iframe').contentWindow)parent.postMessage(e.data,'*');});</script>`;
     else if(url.pathname.startsWith('/screen/v2/'))body=`<div class="fileBox"><img src="${image}"><img src="${image}"></div><script>addEventListener('scroll',()=>{const r=document.scrollingElement;if(${confirm}&&r.scrollTop+r.clientHeight>=r.scrollHeight-3)parent.postMessage({type:'mock-platform-read'},'*');});</script>`;
     else body='<div id="count">已完成任务点 0/2</div><ul><li class="active" style="height:40px">1.1 文档 <span>2</span></li></ul><button id="back">返回课程</button><iframe id="cards" style="width:700px;height:550px" src="https://mooc1.chaoxing.com/mooc-ans/knowledge/cards"></iframe>';
@@ -40,6 +40,13 @@ async function setup(t,{confirm=true,controller=false,videoRace=false,remainingV
   if(remainingVideo)await p.evaluate(()=>{
     document.querySelector('li span').textContent='1';__state.sectionPending['1.1']=1;__state.platformTotal=3;
     document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/3';document.querySelector('#cards').remove();};
+  });
+  if(staleVideoIntent)await p.evaluate(()=>{
+    document.querySelector('li span').textContent='3';__state.sectionPending['1.1']=3;
+    const returnNormally=document.querySelector('#back').onclick;document.querySelector('#back').onclick=()=>{document.querySelector('li span').textContent='1';returnNormally();};
+    __state.currentTask='1.1/video/0';__state.completedTaskIds=['0.1/document/0','1.1/document/0','1.1/document/1','1.1/video/0'];
+    __state.awaitingPlatform={section:'1.1',taskId:'1.1/video/0',pendingBefore:3,platformDoneBefore:0,catalogRefreshRequested:true,returnedAt:new Date().toISOString()};
+    __state.submittedQuizzes=['0.5'];
   });
   if(controller)await p.addScriptTag({content});
   else await p.evaluate(()=>{addEventListener('message',e=>{if(e.data?.type==='xy-document-wheel'){const r=document.querySelector('#cards').getBoundingClientRect();void __normalWheel({...e.data,x:r.left+e.data.x,y:r.top+e.data.y});}});document.querySelector('#cards').contentWindow.postMessage({type:'xy-read-document'},'*');});
@@ -117,4 +124,17 @@ for(const recover of [true,false])test(`lazy reader image after a long session $
   }else{
     await reader.evaluate(()=>{clockOffset=50000;});await p.waitForFunction(()=>events.includes('unsupported'),null,{timeout:5000});
   }
+});
+
+
+test('live unfinished tasks replace stale completion intent and resume document reading',async t=>{
+  const p=await setup(t,{controller:true,remainingVideo:true,staleVideoIntent:true});
+  await p.waitForFunction(()=>__state.currentTask==='1.1/document/0',null,{timeout:7000});
+  assert.equal(await p.evaluate(()=>__state.awaitingPlatform),null);
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['0.1/document/0']);
+  await p.waitForFunction(()=>window.returned&&__state.awaitingPlatform===null,null,{timeout:60000});
+  assert.deepEqual(await p.evaluate(()=>__state.completedTaskIds),['0.1/document/0','1.1/document/0','1.1/document/1']);
+  assert.deepEqual(await p.evaluate(()=>__state.submittedQuizzes),['0.5']);
+  assert.equal(await p.evaluate(()=>__state.platformDone),2);
+  assert.notEqual(await p.evaluate(()=>__state.status),'blocked');
 });

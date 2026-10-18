@@ -305,6 +305,17 @@
     }
     const reportedCards=localCards.length?localCards:
       targets.length===1?frameData(targets[0])?.cards:null;
+    const freshReport=targets.length===1?frameData(targets[0]):null;
+    if(waiting.catalogRefreshRequested&&row?.active&&state.currentSection===waiting.section&&
+      taskIndex!==undefined&&freshReport?.cards?.[Number(taskIndex)]?.evidence==='job-marker'&&
+      freshReport.cards[Number(taskIndex)].complete===false){
+      // A newly loaded chapter can contradict the inventory retained during
+      // navigation. Its own unfinished marker invalidates that completion intent.
+      await save({awaitingPlatform:null,currentTask:null,
+        completedTaskIds:(state.completedTaskIds||[]).filter(id=>id!==waiting.taskId),
+        lastObservedAt:now()});
+      return false;
+    }
     const explicitVideoComplete=!waiting.catalogRefreshRequested&&state.currentSection===waiting.section&&taskIndex!==undefined&&
       reportedCards?.[Number(taskIndex)]?.complete===true;
     const documentIndex=/\/document\/(\d+)$/.exec(waiting.taskId)?.[1];
@@ -351,8 +362,12 @@
     const index=report.tasks.findIndex(task=>!task.complete);
     const current=new RegExp(`^${id.replace('.', '\\.')}\\/document\\/\\d+$`).test(state.currentTask||'');
     const doneIds=new Set(state.completedTaskIds||[]);
+    if(rows.some(row=>row.id===id&&row.active))report.tasks.forEach((task,i)=>{
+      if(!task.complete)doneIds.delete(`${id}/document/${i}`);
+    });
     report.tasks.forEach((task,i)=>{if(task.complete)doneIds.add(`${id}/document/${i}`);});
-    if(doneIds.size>(state.completedTaskIds||[]).length)await save({completedTaskIds:[...doneIds]});
+    if(doneIds.size!==(state.completedTaskIds||[]).length||
+      (state.completedTaskIds||[]).some(task=>!doneIds.has(task)))await save({completedTaskIds:[...doneIds]});
     if(index<0){
       if(!current)return false;
       const back=[...document.querySelectorAll('a,button,[role=button],span')]

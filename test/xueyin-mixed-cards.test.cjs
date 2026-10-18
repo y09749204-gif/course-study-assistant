@@ -91,3 +91,16 @@ for(const marker of ['icon_Completed','catalog_state icon_yiwanc'])test(`complet
     else{await p.waitForTimeout(1200);await p.evaluate(()=>{clockOffset=21000});await p.waitForFunction(()=>s.status==='blocked',null,{timeout:5000});assert.equal(await p.evaluate(()=>nextClicked),false);assert.match(await p.evaluate(()=>s.blockedReason),/加载超过/);}
   }
 });
+
+test('an unverified frame report cannot cancel catalog confirmation or remove task credit',async t=>{
+ const b=await chromium.launch({headless:true,executablePath:process.env.CHROME_EXECUTABLE});t.after(()=>b.close());const p=await b.newPage();
+ await p.route('**/*',r=>r.fulfill({contentType:'text/html; charset=utf-8',body:r.request().url().includes('/knowledge/cards')?`<script>setInterval(()=>parent.postMessage({type:'xy-video-status',currentTime:0,paused:true,cards:[{complete:false,hasMedia:true}]},'*'),100)</script>`:'<ul><li class="active" style="width:700px;height:40px">1.1 模拟任务 <span>1</span></li></ul><iframe style="width:700px;height:650px" src="https://mooc1.chaoxing.com/mooc-ans/knowledge/cards"></iframe>'}));
+ await p.goto('https://mooc1.chaoxing.com/mycourse/studentstudy');
+ await p.evaluate(()=>{window.s={status:'running',currentSection:'1.1',currentTask:'1.1/video/0',completedTaskIds:['1.1/video/0'],sectionPending:{'1.1':1},awaitingPlatform:{section:'1.1',taskId:'1.1/video/0',pendingBefore:1,catalogRefreshRequested:true,verificationOpened:true,returnedAt:new Date().toISOString()}};window.XyBridge={state:async()=>structuredClone(s),update:async patch=>Object.assign(s,patch),notify:async()=>{},onCommand:()=>{},report:()=>{},catalogDiagnostic:()=>{}};});
+ await p.addScriptTag({content:fs.readFileSync(path.join(__dirname,'../src/xueyin-content.cjs'),'utf8')});
+ await p.waitForTimeout(1200);
+ await p.evaluate(()=>{const realNow=Date.now;Date.now=()=>realNow()+17000;});
+ await p.waitForFunction(()=>s.status==='blocked',null,{timeout:6000});
+ assert.equal(await p.evaluate(()=>s.awaitingPlatform.taskId),'1.1/video/0');
+ assert.deepEqual(await p.evaluate(()=>s.completedTaskIds),['1.1/video/0']);
+});
