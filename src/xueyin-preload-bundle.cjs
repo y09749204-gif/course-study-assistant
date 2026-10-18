@@ -372,7 +372,7 @@ function runContent(){
     const reportedCards=localCards.length?localCards:
       targets.length===1?frameData(targets[0])?.cards:null;
     const freshReport=targets.length===1?frameData(targets[0]):null;
-    if(waiting.catalogRefreshRequested&&row?.active&&state.currentSection===waiting.section&&
+    if(waiting.catalogRefreshRequested&&row&&currentSection(rows)===waiting.section&&state.currentSection===waiting.section&&
       taskIndex!==undefined&&freshReport?.cards?.[Number(taskIndex)]?.evidence==='job-marker'&&
       freshReport.cards[Number(taskIndex)].complete===false){
       // A newly loaded chapter can contradict the inventory retained during
@@ -428,7 +428,7 @@ function runContent(){
     const index=report.tasks.findIndex(task=>!task.complete);
     const current=new RegExp(`^${id.replace('.', '\\.')}\\/document\\/\\d+$`).test(state.currentTask||'');
     const doneIds=new Set(state.completedTaskIds||[]);
-    if(rows.some(row=>row.id===id&&row.active))report.tasks.forEach((task,i)=>{
+    if(rows.some(row=>row.id===id))report.tasks.forEach((task,i)=>{
       if(!task.complete)doneIds.delete(`${id}/document/${i}`);
     });
     report.tasks.forEach((task,i)=>{if(task.complete)doneIds.add(`${id}/document/${i}`);});

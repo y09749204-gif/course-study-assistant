@@ -42,6 +42,7 @@ async function setup(t,{confirm=true,controller=false,videoRace=false,remainingV
     document.querySelector('#back').onclick=()=>{window.returned=true;document.querySelector('#count').textContent='已完成任务点 2/3';document.querySelector('#cards').remove();};
   });
   if(staleVideoIntent)await p.evaluate(()=>{
+    document.querySelector('li').classList.remove('active');
     document.querySelector('li span').textContent='3';__state.sectionPending['1.1']=3;
     const returnNormally=document.querySelector('#back').onclick;document.querySelector('#back').onclick=()=>{document.querySelector('li span').textContent='1';returnNormally();};
     __state.currentTask='1.1/video/0';__state.completedTaskIds=['0.1/document/0','1.1/document/0','1.1/document/1','1.1/video/0'];
