@@ -41,6 +41,7 @@ if(location.protocol==='https:'&&officialHost(location.hostname)){
       catalogDiagnostic:details=>ipcRenderer.send('xy-catalog-diagnostic',details),
       returnToCourse:()=>ipcRenderer.invoke('xy-document-return'),
       scroll:details=>ipcRenderer.invoke('xy-document-scroll',details),
+      recoverPlayback:details=>ipcRenderer.invoke('xy-playback-recover',details),
       playback:details=>ipcRenderer.send('xy-playback-observation',details),
       onCommand:listener=>{
         commandListeners.push(listener);
@@ -648,7 +649,13 @@ function runContent(){
           position:progress.currentTime,previousPosition:lastTime,quietFor,
           readyState:progress.readyState,networkState:progress.networkState,
           mediaSampleAge:target.tagName==='VIDEO'?0:Date.now()-frameStatus.get(target).mediaReceivedAt}});
-        await block('视频播放时间超过 30 秒未前进，请检查播放器或在 Chrome 继续观看');return true;
+        let recovery=null;
+        try{recovery=await bridge.recoverPlayback?.({taskId,positionSeconds:progress.currentTime});}catch{}
+        if(recovery?.accepted)return true;
+        if(recovery?.reason==='cooldown')return true;
+        await block(recovery?.reason==='exhausted'?
+          '视频缓冲自动重载 2 次后仍未恢复，请展开课程切换线路或在 Chrome 核对':
+          '视频播放时间超过 30 秒未前进，请检查播放器或在 Chrome 继续观看');return true;
       }
     }else if(Date.now()-lastNavigation>20000&&Date.now()-lastVideoProgress>30000){
       await block('无法读取视频播放状态，请检查播放器');return true;

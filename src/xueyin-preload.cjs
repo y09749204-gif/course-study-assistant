@@ -41,6 +41,7 @@ if(location.protocol==='https:'&&officialHost(location.hostname)){
       catalogDiagnostic:details=>ipcRenderer.send('xy-catalog-diagnostic',details),
       returnToCourse:()=>ipcRenderer.invoke('xy-document-return'),
       scroll:details=>ipcRenderer.invoke('xy-document-scroll',details),
+      recoverPlayback:details=>ipcRenderer.invoke('xy-playback-recover',details),
       playback:details=>ipcRenderer.send('xy-playback-observation',details),
       onCommand:listener=>{
         commandListeners.push(listener);
