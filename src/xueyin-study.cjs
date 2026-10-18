@@ -363,6 +363,26 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
     return update(patch);
   });
   let lastDocumentWheelAt=0;
+  ipcMain.handle('xy-playback-recover',(event,detail)=>{
+    const current=read();
+    if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||
+      current.status!=='running'||current.currentIsQuiz||current.submissionIntent||current.awaitingPlatform||
+      !/^\d+\.\d+\/video\/\d+$/.test(current.currentTask||'')||
+      !current.currentTask.startsWith(`${current.currentSection}/video/`)||
+      detail?.taskId!==current.currentTask||!Number.isFinite(detail.positionSeconds)||
+      detail.positionSeconds<0||detail.positionSeconds>86400)return {accepted:false};
+    const day=X.localDay(),previous=current.playbackRecovery;
+    const same=previous?.day===day&&previous.taskId===current.currentTask;
+    const attempts=same&&Number.isInteger(previous.attempts)?Math.max(0,previous.attempts):0;
+    if(attempts>=2)return {accepted:false,reason:'exhausted'};
+    if(same&&Date.now()-Date.parse(previous.at)<60000)return {accepted:false,reason:'cooldown'};
+    update({playbackRecovery:{day,taskId:current.currentTask,attempts:attempts+1,
+      at:new Date().toISOString(),positionSeconds:Math.round(detail.positionSeconds)}});
+    if(storage.failed())return {accepted:false};
+    // Reload through the platform's normal entry. Never seek or award progress.
+    try{contents().reload();return {accepted:true};}
+    catch{return {accepted:false,reason:'reload-failed'};}
+  });
   ipcMain.handle('xy-document-scroll',async(event,detail)=>{
     if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||
       read().status!=='running'||!/\/document\/\d+$/.test(read().currentTask||''))return {accepted:false};
