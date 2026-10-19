@@ -126,6 +126,22 @@ test('course iframe diagnostics and document wheel input enforce source, status 
   assert.deepEqual(controller.status().submittedQuizzes,[]);
   handlers.get('xy-state-update')(rootEvent,{currentTask:'1.1/document/0'});
   assert.equal(recover({taskId:'1.1/document/0',positionSeconds:25}).accepted,false);
+  const documentRequest={taskId:'1.1/document/0',reason:'resource-timeout'};
+  const recoverDocument=detail=>handlers.get('xy-document-recover')(rootEvent,detail);
+  assert.equal(handlers.get('xy-document-recover')(event,documentRequest).accepted,false);
+  assert.equal(recoverDocument({...documentRequest,reason:'unconfirmed'}).accepted,false);
+  assert.equal(recoverDocument({...documentRequest,taskId:'1.1/document/1'}).accepted,false);
+  const documentBefore=JSON.parse(fs.readFileSync(stateFile,'utf8'));
+  for(const patch of [{status:'paused'},{currentIsQuiz:true},{submissionIntent:{section:'1.1'}},{awaitingPlatform:{section:'1.1'}},{currentSection:'1.2'},{currentTask:'1.1/video/0'}]){
+    fs.writeFileSync(stateFile,JSON.stringify({...documentBefore,...patch}));assert.equal(recoverDocument(documentRequest).accepted,false);
+  }
+  fs.writeFileSync(stateFile,JSON.stringify(documentBefore));
+  assert.equal(recoverDocument(documentRequest).accepted,true);assert.equal(recoveryReloads,3);
+  assert.equal(recoverDocument(documentRequest).reason,'cooldown');
+  const documentRetry=JSON.parse(fs.readFileSync(stateFile,'utf8'));documentRetry.documentRecovery.at=new Date(Date.now()-61000).toISOString();fs.writeFileSync(stateFile,JSON.stringify(documentRetry));
+  assert.equal(recoverDocument(documentRequest).accepted,true);assert.equal(recoveryReloads,4);
+  assert.equal(recoverDocument(documentRequest).reason,'exhausted');assert.equal(recoveryReloads,4);
+  assert.deepEqual(controller.status().completedTaskIds,[]);
   const expired=new Date(Date.now()-60000).toISOString();
   fs.writeFileSync(stateFile,JSON.stringify({status:'blocked',
     blockedReason:'1.1 的视频已结束，但目录任务点未减少',

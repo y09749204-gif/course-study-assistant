@@ -382,16 +382,25 @@
       else link.click();
       return true;
     }
-    if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
+    const taskId=`${id}/document/${index}`;
+    if(state.currentTask!==taskId)await save({currentTask:taskId,lastObservedAt:now()});
+    if(['unsupported','unconfirmed','stalled'].includes(report.stage))
       bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,reason:report.reason,index,total:report.tasks.length}});
+    if(report.stage==='unsupported'&&report.reason==='resource-timeout'){
+      let recovery=null;
+      try{recovery=await bridge.recoverDocument?.({taskId,reason:report.reason});}catch{}
+      if(recovery?.accepted||recovery?.reason==='cooldown')return true;
+      if(recovery?.reason==='exhausted'){
+        await block('文档图片重试及自动重载后仍未加载，请展开课程检查网络');return true;
+      }
+    }
+    if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
       const loadingFailure=report.reason==='resource-timeout'?'文档当前页图片加载超过 20 秒，请检查网络后恢复':
         ['reader-frame-timeout','chapter-frame-timeout'].includes(report.reason)?'文档阅读器超过 20 秒没有响应，请刷新课程后恢复':
         '文档阅读器未加载或不支持，请展开课程检查';
       await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?loadingFailure:
         '文档已浏览至末页，但平台未确认完成；请展开课程核对');return true;
     }
-    const taskId=`${id}/document/${index}`;
-    if(state.currentTask!==taskId)await save({currentTask:taskId,lastObservedAt:now()});
     if(report.stage==='idle'){
       // Both drivers share the chapter frame. Stop its video driver before
       // starting the reader so video initialization cannot scroll it away.
