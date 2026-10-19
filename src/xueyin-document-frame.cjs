@@ -6,6 +6,7 @@
   if(!chapter&&!wrapper&&!reader)return;
   let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0,resourceWaitSince=null,childReportAt=0,reason=null;
   const reasons=['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'];
+  let imageRetries=new WeakMap();
   const tasks=()=>[...document.querySelectorAll('.ans-attach-ct')].filter(e=>
     e.querySelector('.ans-job-icon')&&e.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'));
   const complete=e=>e.classList.contains('ans-job-finished');
@@ -20,7 +21,7 @@
     if(event.source===parent){
       if(event.data?.type==='xy-pause'){stop();return;}
       if(event.data?.type!=='xy-read-document')return;
-      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;childReportAt=0;reason=null;}
+      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;childReportAt=0;reason=null;imageRetries=new WeakMap();}
       return;
     }
     if(!['xy-document-progress','xy-document-wheel'].includes(event.data?.type))return;
@@ -93,8 +94,19 @@
     // Use the reader's real scrolling surface; its own scroll handlers report progress.
     const images=[...document.querySelectorAll('.fileBox img')];
     const root=document.scrollingElement;
-    if(!root||!images.length||images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;}).some(e=>!e.complete||e.naturalWidth===0)){
+    const visibleImages=images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;});
+    if(!root||!images.length||visibleImages.some(e=>!e.complete||e.naturalWidth===0)){
       if(resourceWaitSince===null)resourceWaitSince=Date.now();
+      for(const image of visibleImages.filter(e=>e.complete&&e.naturalWidth===0)){
+        const attempt=imageRetries.get(image)||{count:0,at:0};
+        if(attempt.count>=2||Date.now()-attempt.at<3000)continue;
+        try{
+          const source=image.currentSrc||image.getAttribute('src');
+          if(!source||new URL(source,location.href).protocol!=='https:')continue;
+          imageRetries.set(image,{count:attempt.count+1,at:Date.now()});
+          image.src=source;
+        }catch{}
+      }
       const timedOut=Date.now()-resourceWaitSince>20000;
       report({type:'xy-document-progress',stage:timedOut?'unsupported':'loading',
         reason:timedOut?'resource-timeout':'resource-loading'});

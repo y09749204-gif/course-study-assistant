@@ -369,6 +369,22 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
     return update(patch);
   });
   let lastDocumentWheelAt=0;
+  ipcMain.handle('xy-document-recover',(event,detail)=>{
+    const current=read();
+    if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||current.status!=='running'||
+      current.currentIsQuiz||current.submissionIntent||current.awaitingPlatform||
+      !/^\d+\.\d+\/document\/\d+$/.test(current.currentTask||'')||
+      !current.currentTask.startsWith(`${current.currentSection}/document/`)||
+      detail?.taskId!==current.currentTask||detail.reason!=='resource-timeout')return {accepted:false};
+    const day=X.localDay(),previous=current.documentRecovery;
+    const same=previous?.day===day&&previous.taskId===current.currentTask;
+    const attempts=same&&Number.isInteger(previous.attempts)?Math.max(0,previous.attempts):0;
+    if(attempts>=2)return {accepted:false,reason:'exhausted'};
+    if(same&&Date.now()-Date.parse(previous.at)<60000)return {accepted:false,reason:'cooldown'};
+    update({documentRecovery:{day,taskId:current.currentTask,attempts:attempts+1,at:new Date().toISOString()}});
+    if(storage.failed())return {accepted:false};
+    try{contents().reload();return {accepted:true};}catch{return {accepted:false,reason:'reload-failed'};}
+  });
   ipcMain.handle('xy-playback-recover',(event,detail)=>{
     const current=read();
     if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||
