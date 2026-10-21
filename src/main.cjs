@@ -3,6 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {createZhihuishuStudy}=require('./study.cjs');
 const {createXueyinStudy}=require('./xueyin-study.cjs');
+const {createIcourseStudy}=require('./icourse-study.cjs');
 const {answerAssessment:answerAssessmentQuestion}=require('./assessment-ai.cjs');
 const X=require('./xueyin-core.cjs');
 const {createProfiles,createCourseRuntime}=require('./course-profiles.cjs');
@@ -27,7 +28,7 @@ app.setPath('userData',runtime.directory);
 fs.mkdirSync(runtime.directory,{recursive:true});
 app.setPath('sessionData',runtime.directory);
 const gotLock=app.requestSingleInstanceLock();
-let dashboard=null,controller=null,environmentController=null,cookieBackup=null,xyCookieBackup=null,cookieTimer=null,cookieWatchers=[],storageFlushed=false,storageFlushStarted=false;
+let dashboard=null,controller=null,environmentController=null,moocController=null,cookieBackup=null,xyCookieBackup=null,moocCookieBackup=null,cookieTimer=null,cookieWatchers=[],storageFlushed=false,storageFlushStarted=false;
 if(!gotLock) app.quit();
 else {
   const lifecycle=createLifecycleLog(app.getPath('userData'),{app,version:app.getVersion()});
@@ -36,13 +37,16 @@ else {
     const data=app.getPath('userData');
     const courseSession=session.fromPartition('persist:course');
     const xySession=session.fromPartition('persist:xueyin');
+    const moocSession=session.fromPartition('persist:icourse');
     cookieBackup=createSessionCookieBackup(path.join(data,'zhihuishu-study','session-cookies.bin'),
       safeStorage,courseSession.cookies);
     xyCookieBackup=createSessionCookieBackup(path.join(data,'xueyin-study','session-cookies.bin'),
       safeStorage,xySession.cookies,X.allowedDomain);
-    await Promise.all([cookieBackup.restore(),xyCookieBackup.restore()]);
-    cookieWatchers=[cookieBackup.watch(),xyCookieBackup.watch()];
-    cookieTimer=setInterval(()=>{void Promise.allSettled([cookieBackup.capture(),xyCookieBackup.capture()]);},10000);
+    moocCookieBackup=createSessionCookieBackup(path.join(data,'icourse-study','session-cookies.bin'),safeStorage,moocSession.cookies,
+      domain=>typeof domain==='string'&&['icourse163.org','163.com'].some(root=>domain.replace(/^\./,'')===root||domain.replace(/^\./,'').endsWith('.'+root)));
+    await Promise.all([cookieBackup.restore(),xyCookieBackup.restore(),moocCookieBackup.restore()]);
+    cookieWatchers=[cookieBackup.watch(),xyCookieBackup.watch(),moocCookieBackup.watch()];
+    cookieTimer=setInterval(()=>{void Promise.allSettled([cookieBackup.capture(),xyCookieBackup.capture(),moocCookieBackup.capture()]);},10000);
     const aiFile=path.join(data,'ai.json');
     const trusted=event=>event.sender===dashboard?.webContents&&event.senderFrame===event.sender.mainFrame;
     const readAi=()=>{try{return JSON.parse(fs.readFileSync(aiFile,'utf8'));}catch{return {mode:'off',endpoint:'',model:''};}};
@@ -129,22 +133,25 @@ else {
     lifecycle.watchWindow(dashboard);
     dashboard.loadFile(path.join(__dirname,'dashboard.html'));
     const claimCourse=owner=>{
-      if(owner==='mayuan')environmentController?.preempt();
-      else if(owner==='xueyin'){
-        if(controller?.status().dailyState.status==='running')controller.command('PAUSE');
-        controller?.close();
+      for(const [platform,item] of [['mayuan',controller],['xueyin',environmentController],['icourse',moocController]]){
+        if(platform===owner||!item)continue;
+        if(platform==='xueyin'){item.preempt();continue;}
+        const state=item.status();
+        if((state.dailyState?.status||state.status)==='running')item.command('PAUSE');
+        item.close();
       }
     };
     const profiles=createProfiles(data,safeStorage);
-    const courseRuntime=createCourseRuntime({profiles,ipcMain,host:dashboard,
+    const courseRuntime=createCourseRuntime({profiles,ipcMain,host:dashboard,supportedPlatforms:['mayuan','xueyin','icourse'],
       factory:(profile,scopedIpc,scopedHost)=>{
         const options={WebContentsView,hostWindow:scopedHost,ipcMain:scopedIpc,Notification,safeStorage,
           data:profiles.dataFor(profile),trusted,profile:profiles.config(profile),
           claimCourse:()=>{courseRuntime.claim(profile.id);claimCourse(profile.platform);}};
+        if(profile.platform==='icourse')return createIcourseStudy({...options,courseSession:moocSession});
         return profile.platform==='mayuan'?
           createZhihuishuStudy({...options,answer,courseSession,backgroundInput:process.argv.includes('--background-input-experiment')}):
           createXueyinStudy({...options,answer:answerAssessment,courseSession:xySession,mayuanStatus:()=>controller?.status()});
-      },onChange:(platform,value)=>{if(platform==='mayuan')controller=value;else environmentController=value;}});
+      },onChange:(platform,value)=>{if(platform==='mayuan')controller=value;else if(platform==='xueyin')environmentController=value;else{moocController=value;value.setExpanded(controller?.status().courseExpanded===true);}}});
     courseRuntime.init();
     ipcMain.handle('courses-list',event=>{if(!trusted(event))throw Error('Untrusted window');return courseRuntime.list();});
     ipcMain.handle('courses-select',(event,id)=>{if(!trusted(event)||typeof id!=='string')throw Error('Invalid course');return courseRuntime.select(id);});
@@ -153,7 +160,7 @@ else {
     ipcMain.handle('course-expanded',(event,value)=>{
       if(!trusted(event)||typeof value!=='boolean')throw Error('Invalid course view');
       if(value)compactPosition=dashboard.getPosition();
-      controller.setExpanded(value);environmentController.setExpanded(value);
+      controller.setExpanded(value);environmentController.setExpanded(value);moocController?.setExpanded(value);
       dashboard.setSize(value?1600:400,value?900:620);
       if(value)dashboard.center();
       else if(compactPosition)dashboard.setPosition(...compactPosition);
@@ -170,6 +177,8 @@ else {
       try{environmentController.command('RUN');}catch{}
     }else if(process.argv.includes('--open-environment-once')){
       try{environmentController.open();}catch{}
+    }else if(process.argv.includes('--open-mooc-once')){
+      try{moocController?.open();}catch{}
     }
   });
   app.on('before-quit',event=>{
@@ -180,13 +189,13 @@ else {
     clearInterval(cookieTimer);
     for(const stopWatching of cookieWatchers)stopWatching();
     const courseSession=session.fromPartition('persist:course');
-    void Promise.allSettled([cookieBackup?.capture(),xyCookieBackup?.capture()]).then(()=>{
-      for(const partition of ['persist:course','persist:xueyin'])session.fromPartition(partition).flushStorageData();
-      return Promise.allSettled(['persist:course','persist:xueyin'].map(partition=>
+    void Promise.allSettled([cookieBackup?.capture(),xyCookieBackup?.capture(),moocCookieBackup?.capture()]).then(()=>{
+      for(const partition of ['persist:course','persist:xueyin','persist:icourse'])session.fromPartition(partition).flushStorageData();
+      return Promise.allSettled(['persist:course','persist:xueyin','persist:icourse'].map(partition=>
         session.fromPartition(partition).cookies.flushStore()));
     })
       .catch(()=>{}).finally(()=>{
-      storageFlushed=true;environmentController?.stop();controller?.stop();app.quit();
+      storageFlushed=true;environmentController?.stop();controller?.stop();moocController?.stop();app.quit();
     });
   });
   app.on('window-all-closed',()=>app.quit());

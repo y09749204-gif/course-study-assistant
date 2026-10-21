@@ -23,7 +23,8 @@ function createProfiles(data,safeStorage){
   const file=path.join(data,'courses.json');
   const read=()=>{try{const v=JSON.parse(fs.readFileSync(file,'utf8'));if(v.version!==1||!Array.isArray(v.profiles)||v.profiles.length>50)throw Error('课程配置文件无效');
     const ids=new Set();for(const p of v.profiles){if(!/^(mayuan|xueyin|[a-f0-9]{8}-[a-f0-9-]{27})$/.test(p.id)||ids.has(p.id)||!['mayuan','xueyin','icourse'].includes(p.platform)||p.legacy&&!['mayuan','xueyin'].includes(p.id)||['mayuan','xueyin'].includes(p.id)&&p.platform!==p.id)throw Error('课程配置文件无效');ids.add(p.id);}
-    if(!ids.has(v.selectedId)||!v.byPlatform||['mayuan','xueyin'].some(platform=>!v.profiles.some(p=>p.id===v.byPlatform[platform]&&p.platform===platform)))throw Error('课程选择无效');return v;}catch(e){if(e.code==='ENOENT')return {version:1,...defaults()};throw Error('课程配置无法读取，已停止使用默认配置覆盖');}};
+    if(!ids.has(v.selectedId)||!v.byPlatform||['mayuan','xueyin'].some(platform=>!v.profiles.some(p=>p.id===v.byPlatform[platform]&&p.platform===platform))||
+      Object.entries(v.byPlatform).some(([platform,id])=>!['mayuan','xueyin','icourse'].includes(platform)||!v.profiles.some(p=>p.id===id&&p.platform===platform)))throw Error('课程选择无效');return v;}catch(e){if(e.code==='ENOENT')return {version:1,...defaults()};throw Error('课程配置无法读取，已停止使用默认配置覆盖');}};
   const write=v=>{fs.mkdirSync(data,{recursive:true});fs.writeFileSync(file+'.pending',JSON.stringify(v),'utf8');fs.renameSync(file+'.pending',file);};
   const get=id=>{const p=read().profiles.find(p=>p.id===id);if(!p)throw Error('课程不存在');return p;};
   const dataFor=p=>p.legacy?data:path.join(data,'courses',p.id);

@@ -31,6 +31,12 @@
       <div><small>已提交测验</small><strong><span id="xyQuizzes">0</span><span class="unit">份</span></strong><span class="metric-note">章节测验</span></div>
     </section>
   </div>
+  <div id="moocPanel" class="tab-panel" hidden>
+    <section class="summary" aria-label="中国大学 MOOC 本地观察">
+      <div><small>观察到播完</small><strong><span id="moocEnded">0</span><span class="unit">段</span></strong><span class="metric-note">不等于平台已完成</span></div>
+      <div><small>正常播放</small><strong><span id="moocMinutes">0</span><span class="unit">分钟</span></strong><span class="metric-note">本地累计观察</span></div>
+    </section>
+  </div>
   <section id="taskPanel" class="task-panel">
     <div class="task-heading"><span>当前小节</span><strong id="currentSection">待确认</strong><span id="taskKind"></span></div>
     <div id="taskInfo" class="task-info">
@@ -59,7 +65,7 @@
         <div class="form">
           <label>管理课程<select id="profileEdit"></select></label>
           <label>课程名称<input id="profileName" maxlength="40" autocomplete="off"></label>
-          <label>平台<select id="profilePlatform"><option value="mayuan">智慧树</option><option value="xueyin">学习通</option></select></label>
+          <label>平台<select id="profilePlatform"><option value="mayuan">智慧树</option><option value="xueyin">学习通</option><option value="icourse">中国大学 MOOC（视频续播试用）</option></select></label>
           <label>课程学习页面链接<input id="profileUrl" type="password" autocomplete="off" placeholder="新增时必填；已保存的链接不回显"></label>
           <label id="profileChapterField" hidden>课程总章数（用于完成核对）<input id="profileChapters" type="number" min="1" max="500" placeholder="填写平台目录的总章数"></label>
           <div id="profileGoals"><p>目标用于新一天的任务，已有目标快照保留。</p><label>每日新完成小节<input id="profileLessons" type="number" min="1" max="100" value="2"></label><label>每日正常播放分钟<input id="profileMinutes" type="number" min="1" max="480" value="25"></label><label>成绩分析链接（可选）<input id="profileScore" type="password" autocomplete="off" placeholder="留空保持已保存的链接"></label></div>
@@ -75,6 +81,7 @@
     <details class="settings-group"><summary>平台核对</summary><div class="group-content">
       <div id="mayuanReview"><span id="platform" class="review-label">待核对</span><p>次日读取成绩分析中的学习记录，数据延迟时继续复查。</p><div id="history"></div><div class="actions"><button id="checkPlatform">立即读取</button><button id="openScore">打开成绩分析</button></div><p id="platformNote" class="detail"></p></div>
       <p id="environmentReview" hidden>学习通任务点和测验提交情况以课程平台为准。可展开课程查看目录与测验结果。</p>
+      <p id="moocReview" hidden>中国大学 MOOC 复用平台“自动播放下一视频”。本地播放观察不代表平台完成记录；文档、测验和考试需手动处理。本轮未接入平台完成核对。</p>
     </div></details>
     <footer>登录会话和课程链接加密保存在本机。</footer>
   </div>

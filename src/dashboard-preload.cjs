@@ -29,3 +29,8 @@ contextBridge.exposeInMainWorld('environment',{
 contextBridge.exposeInMainWorld('courses',{
   list:()=>ipcRenderer.invoke('courses-list'),select:id=>ipcRenderer.invoke('courses-select',id),save:input=>ipcRenderer.invoke('courses-save',input)
 });
+contextBridge.exposeInMainWorld('mooc',{
+  status:()=>ipcRenderer.invoke('mooc-status'),open:()=>ipcRenderer.invoke('mooc-open'),
+  close:()=>ipcRenderer.invoke('mooc-close'),refresh:()=>ipcRenderer.invoke('mooc-refresh'),
+  command:value=>ipcRenderer.invoke('mooc-command',value),resizePane:value=>ipcRenderer.invoke('mooc-pane-width',value)
+});
