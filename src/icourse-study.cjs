@@ -3,6 +3,7 @@ const M=require('./icourse-core.cjs');
 const {createAtomicState}=require('./atomic-state.cjs');
 const {previewLayout}=require('./course-preview.cjs');
 const reasons={
+  interaction:'课程页有交互弹窗，请先完成登录、验证或题目后恢复',
   'no-video':'未找到唯一的视频播放器；文档、测验等内容请先在课程页处理',
   loading:'视频加载超过 30 秒，请检查网络后恢复',
   'media-error':'播放器报告媒体错误，请在课程页检查后恢复',
@@ -18,6 +19,13 @@ function createIcourseStudy({WebContentsView,hostWindow,ipcMain,data,trusted,pro
   const pausePage=()=>{previous=null;if(hasView())view.webContents.send('mooc-pause');};
   const storage=createAtomicState(path.join(data,'icourse-study','state.json'),()=>({status:'idle',seconds:0,observedEnded:[],currentSection:null,blockedReason:null}),{onFailure:pausePage});
   const update=patch=>storage.write({...storage.read(),...patch});
+  const resumeURL=()=>{
+    const saved=storage.read().resumeUnit,numeric=value=>/^\d{1,20}$/.test(value||'');
+    if(!saved||!numeric(saved.content)||saved.unit!==null&&!numeric(saved.unit)||saved.chapter!==null&&!numeric(saved.chapter))return config.url;
+    const u=new URL(config.url);u.pathname=u.pathname.replace(/\/content\/\d+\/?$/,'/content/'+saved.content);
+    for(const [key,value] of [['unitId',saved.unit],['chapterId',saved.chapter]]){u.searchParams.delete(key);if(value!==null)u.searchParams.set(key,value);}
+    return M.validateLaunchURL(u.href).url;
+  };
   if(storage.read().status==='running')update({status:'interrupted',blockedReason:'应用上次关闭，点击恢复继续'});
   const status=()=>({...storage.read(),configured:true,windowOpen:hasView(),courseOnTarget:!!target(),courseExpanded:expanded,sidebarWidth});
   const layout=()=>{if(!hasView()||hostWindow.isDestroyed())return;const p=previewLayout(hostWindow.getContentSize(),sidebarWidth,expanded);view.setBounds(p.bounds);view.webContents.setZoomFactor(p.zoom);};
@@ -32,7 +40,12 @@ function createIcourseStudy({WebContentsView,hostWindow,ipcMain,data,trusted,pro
   };
   const open=()=>{
     claimCourse?.();
-    if(hasView()){hostWindow.show();hostWindow.focus();return status();}
+    if(hasView()){
+      if(!target()&&!view.webContents.isLoadingMainFrame()){
+        epoch++;previous=null;void view.webContents.loadURL(resumeURL()).catch(()=>block('课程页面加载失败，请检查网络后刷新'));
+      }
+      hostWindow.show();hostWindow.focus();return status();
+    }
     view=new WebContentsView({webPreferences:{preload:path.join(__dirname,'icourse-preload.cjs'),
       session:courseSession,contextIsolation:true,nodeIntegration:false,sandbox:false}});
     const wc=view.webContents;wc.setAudioMuted(true);hostWindow.contentView.addChildView(view);layout();
@@ -43,7 +56,7 @@ function createIcourseStudy({WebContentsView,hostWindow,ipcMain,data,trusted,pro
     wc.on('did-navigate-in-page',()=>{epoch++;previous=null;});
     wc.on('render-process-gone',()=>block('课程页面进程已退出，请关闭课程后重新打开'));
     wc.on('did-fail-load',(_e,code,_text,_url,isMain)=>{if(isMain&&code!==-3)block('课程页面加载失败，请检查网络后刷新');});
-    void wc.loadURL(config.url).catch(()=>block('课程页面加载失败，请检查网络后刷新'));
+    void wc.loadURL(resumeURL()).catch(()=>block('课程页面加载失败，请检查网络后刷新'));
     return status();
   };
   const command=type=>{
@@ -68,18 +81,19 @@ function createIcourseStudy({WebContentsView,hostWindow,ipcMain,data,trusted,pro
     const state=storage.read();
     if(state.status!=='running'||message?.epoch!==epoch)return false;
     const u=new URL(event.senderFrame.url),unit=[u.pathname.split('/').at(-1),u.searchParams.get('unitId')||''].join(':');
+    const resumeUnit={content:M.validateLaunchURL(u.href).contentId,unit:u.searchParams.get('unitId'),chapter:u.searchParams.get('chapterId')};
     if(message.unit!==unit)return false;
     if(Object.hasOwn(reasons,message.issue)){block(reasons[message.issue]);return false;}
     if(message.issue==='waiting-next'&&message.ended===true){
       previous=null;
-      update({currentSection:unit.split(':')[0],blockedReason:null,waitingNext:true,
+      update({currentSection:unit.split(':')[0],resumeUnit,blockedReason:null,waitingNext:true,
         observedEnded:[...new Set([...state.observedEnded,unit])].slice(-1000)});return true;
     }
     if(message.issue!=='playing'||!Number.isFinite(message.time)||message.time<0||message.rate!==1)return false;
     const stamp=now(),elapsed=previous?(stamp-previous.at)/1000:0,delta=previous?message.time-previous.time:0;
     const credit=previous?.unit===unit&&message.paused===false&&message.seeking===false&&elapsed>0&&elapsed<=3&&delta>0&&delta<=elapsed+1?Math.min(delta,elapsed):0;
     previous={unit,time:message.time,at:stamp};
-    update({seconds:state.seconds+credit,currentSection:unit.split(':')[0],waitingNext:false,blockedReason:null});return true;
+    update({seconds:state.seconds+credit,currentSection:unit.split(':')[0],resumeUnit,waitingNext:false,blockedReason:null});return true;
   };
   ipcMain.handle('mooc-observation',observe);
   ipcMain.on('mooc-ended',(event,message)=>{

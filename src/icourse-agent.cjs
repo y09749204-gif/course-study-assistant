@@ -28,6 +28,11 @@ function attach({bridge,identity,matches,root=window}){
       if(!running){pause();lastTime=null;missingSince=null;endedSince=null;stalledSince=null;return;}
       const u=new URL(root.location.href),unit=[u.pathname.split('/').at(-1),u.searchParams.get('unitId')||''].join(':');
       const report=(issue,extra={})=>bridge.report({epoch:state.epoch,unit,issue,...extra});
+      const modal=[...root.document.querySelectorAll('[role="dialog"],[aria-modal="true"]')].some(node=>{
+        const r=node.getBoundingClientRect(),style=root.getComputedStyle(node);
+        return r.width>0&&r.height>0&&style.display!=='none'&&style.visibility!=='hidden';
+      });
+      if(modal){await report('interaction');pause();return;}
       if(!v){missingSince??=Date.now();if(Date.now()-missingSince>=30000)await report('no-video');return;}
       if(v.error){await report('media-error');pause();return;}
       if(v.readyState<2){missingSince??=Date.now();if(Date.now()-missingSince>=30000)await report('loading');return;}

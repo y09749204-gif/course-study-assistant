@@ -13,7 +13,7 @@ async function setup(t){
     window.state={status:'running',epoch:1};window.reports=[];window.paused=true;window.time=0;window.ended=false;window.source='mock-a';
     const v=document.querySelector('video');Object.defineProperties(v,{paused:{get:()=>paused},ended:{get:()=>ended},readyState:{get:()=>4},currentTime:{get:()=>time},currentSrc:{get:()=>source}});
     v.play=async()=>{paused=false;window.plays=(window.plays||0)+1;};v.pause=()=>{paused=true;};
-    window.bridge={state:async()=>({...state}),onCommand:fn=>window.pauseCommand=fn,report:async value=>{reports.push(value);if(['no-video','next-unconfirmed','stalled'].includes(value.issue))state.status='blocked';return true;}};
+    window.bridge={state:async()=>({...state}),onCommand:fn=>window.pauseCommand=fn,report:async value=>{reports.push(value);if(['no-video','next-unconfirmed','stalled','interaction'].includes(value.issue))state.status='blocked';return true;}};
   });
   await p.addScriptTag({content:`window.MockMoocCore=(()=>{const module={exports:{}};${coreSource};return module.exports;})();`});
   await p.addScriptTag({content:`(${attach.toString()})({bridge:window.bridge,identity:{course:'MOCK-100',term:'300'},matches:MockMoocCore.coursePage});`});
@@ -34,4 +34,11 @@ test('MOOC stops when the platform does not advance after a natural end',async t
   const p=await setup(t);await p.evaluate(()=>{ended=true;});await p.waitForFunction(()=>reports.some(r=>r.issue==='waiting-next'));
   await p.evaluate(()=>{const original=Date.now;Date.now=()=>original()+31000;});
   await p.waitForFunction(()=>state.status==='blocked');assert.equal(await p.evaluate(()=>reports.at(-1).issue),'next-unconfirmed');
+});
+test('MOOC pauses for an interaction dialog rather than restarting the video behind it',async t=>{
+  const p=await setup(t);
+  await p.evaluate(()=>{paused=true;const modal=document.createElement('div');modal.setAttribute('role','dialog');modal.textContent='模拟验证';document.body.append(modal);});
+  await p.waitForFunction(()=>state.status==='blocked');
+  assert.equal(await p.evaluate(()=>reports.at(-1).issue),'interaction');
+  assert.equal(await p.evaluate(()=>paused),true);
 });

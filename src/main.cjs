@@ -135,7 +135,7 @@ else {
     const claimCourse=owner=>{
       for(const [platform,item] of [['mayuan',controller],['xueyin',environmentController],['icourse',moocController]]){
         if(platform===owner||!item)continue;
-        if(platform==='xueyin'){item.preempt();continue;}
+        if(platform==='xueyin'&&owner==='mayuan'){item.preempt();continue;}
         const state=item.status();
         if((state.dailyState?.status||state.status)==='running')item.command('PAUSE');
         item.close();
@@ -177,6 +177,8 @@ else {
       try{environmentController.command('RUN');}catch{}
     }else if(process.argv.includes('--open-environment-once')){
       try{environmentController.open();}catch{}
+    }else if(process.argv.includes('--resume-mooc-once')){
+      try{moocController?.command('RUN');}catch{}
     }else if(process.argv.includes('--open-mooc-once')){
       try{moocController?.open();}catch{}
     }

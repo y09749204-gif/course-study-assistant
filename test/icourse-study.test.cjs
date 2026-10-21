@@ -56,3 +56,17 @@ test('course navigation invalidates observations and pauses on a different offer
   wc.mainFrame.url=url;s.controller.command('RUN');assert.notEqual(s.state().epoch,epoch);
   s.controller.close();assert.equal(s.controller.status().windowOpen,false);
 });
+test('opening after login returns from the course introduction to the configured learning page',()=>{
+  const s=setup();s.controller.open();const wc=s.views[0].webContents;
+  wc.mainFrame.url='https://www.icourse163.org/course/MOCK-100';wc.emit('did-navigate');
+  assert.equal(s.controller.status().courseOnTarget,false);
+  s.controller.open();assert.equal(wc.getURL(),url);assert.equal(s.controller.status().courseOnTarget,true);
+  s.controller.stop();
+});
+test('MOOC reopens the last observed unit within the same configured offering',()=>{
+  const s=setup();s.controller.command('RUN');
+  const next=url.replace('content/200','content/201').replace('unitId=400','unitId=401');
+  const wc=s.views[0].webContents;wc.mainFrame.url=next;wc.emit('did-navigate-in-page');s.report({unit:'201:401'});
+  s.controller.close();s.controller.open();assert.equal(s.views.at(-1).webContents.getURL(),next);
+  s.controller.stop();
+});

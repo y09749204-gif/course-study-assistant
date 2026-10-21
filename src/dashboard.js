@@ -118,7 +118,7 @@ async function refresh(){
     const profileName=profiles?.profiles.find(p=>p.id===selectedProfile)?.name||(selected==='xueyin'?'学习通':'智慧树');
     el('webTitle').textContent=`${platformNames[selected]} · ${profileName}`;
     el('courseLocation').textContent=active.courseOnTarget?'课程已打开':active.windowOpen?'登录或加载中':'尚未打开';
-    el('coursePlaceholder').hidden=!!active.windowOpen;el('backCourse').hidden=selected!=='mayuan'||!data.scoreRequested;
+    el('coursePlaceholder').hidden=!!active.windowOpen;el('backCourse').hidden=selected==='icourse'?!(active.windowOpen&&!active.courseOnTarget):selected!=='mayuan'||!data.scoreRequested;
     el('openRight').textContent=`打开${profileName}课程`;
     renderReview(data);renderTask();
   }catch(error){if(version===refreshVersion){uiError=`读取失败：${error.message}`;renderTask();}}
@@ -138,7 +138,7 @@ async function run(work){
 const openCourse=()=>activeApi().open();
 el('courseSelect').onchange=event=>run(()=>globalThis.courses?courses.select(event.target.value):selectCourse(event.target.value));
 el('open').onclick=()=>run(openCourse);el('openRight').onclick=()=>run(openCourse);
-el('backCourse').onclick=()=>run(()=>study.open());
+el('backCourse').onclick=()=>run(openCourse);
 el('primaryAction').onclick=()=>run(()=>{
   const state=selected==='mayuan'?current.dailyState:activeData();if(!state)return;
   if(selected==='xueyin'&&environmentState.submissionIntent||state.status==='submitting')return;
