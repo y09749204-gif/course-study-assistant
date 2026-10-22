@@ -463,3 +463,33 @@ test('completed last lesson expands the next chapter and selects its first lesso
   assert.equal(await page.evaluate(()=>window.__stored.dailyState.currentLesson),'3.1');
   assert.equal(await page.evaluate(()=>window.__stored.dailyState.status),'running');
 });
+
+for(const variant of ['valid','duplicate','out-of-range','uncertain','unconfirmed'])test(`multiple-choice popup ${variant}`,async t=>{
+ const page=await setup(t);
+ await page.evaluate(variant=>{
+   const quiz=document.querySelector('#quiz');
+   quiz.innerHTML='<h2>AI随堂练习</h2><p>1. 【多选题】 模拟题目请选择符合条件的项目</p>'+['甲','乙','丙','丁'].map((text,i)=>`<p class="answer-row"><span class="class-question-select ${i===1?'isSelect':''}">${String.fromCharCode(65+i)}</span><span>${text}</span></p>`).join('')+'<button id="multiSubmit">提交作答</button>';
+   window.multiSubmits=0;window.multiInputs=[];
+   for(const row of quiz.querySelectorAll('.answer-row'))row.onclick=()=>{if(variant!=='unconfirmed')row.querySelector('span').classList.toggle('isSelect');};
+   quiz.querySelector('button').onclick=()=>{multiSubmits++;window.multiSelection=[...quiz.querySelectorAll('.answer-row')].map((r,i)=>r.querySelector('.isSelect')?i:null).filter(i=>i!==null);quiz.style.display='none';};
+   const original=chrome.runtime.sendMessage;
+   chrome.runtime.sendMessage=async message=>{
+     if(message.type!=='ANSWER')return original(message);
+     multiInputs.push(message.questionType);
+     if(variant==='uncertain')return {error:'uncertain'};
+     return {type:'multi',answer:variant==='duplicate'?[0,0]:variant==='out-of-range'?[0,4]:[0,2]};
+   };
+   quiz.style.display='block';document.querySelector('video').pause();
+ },variant);
+ if(variant==='valid'){
+   await page.waitForFunction(()=>multiSubmits===1,null,{timeout:10000});
+   assert.deepEqual(await page.evaluate(()=>multiSelection),[0,2]);
+   assert.deepEqual(await page.evaluate(()=>multiInputs),['multi']);
+   assert.equal(await page.evaluate(()=>__stored.dailyState.submissionIntent),false);
+ }else{
+   await page.waitForFunction(()=>__stored.dailyState?.status==='blocked',null,{timeout:10000});
+   assert.equal(await page.evaluate(()=>multiSubmits),0);
+   assert.equal(await page.evaluate(()=>__stored.dailyState.fallbackCount||0),0);
+ }
+ assert.equal(await page.evaluate(()=>window.__untrusted||false),false);
+});

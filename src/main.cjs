@@ -149,7 +149,7 @@ else {
           claimCourse:()=>{courseRuntime.claim(profile.id);claimCourse(profile.platform);}};
         if(profile.platform==='icourse')return createIcourseStudy({...options,courseSession:moocSession});
         return profile.platform==='mayuan'?
-          createZhihuishuStudy({...options,answer,courseSession,backgroundInput:process.argv.includes('--background-input-experiment')}):
+          createZhihuishuStudy({...options,answer,answerTyped:answerAssessment,courseSession,backgroundInput:process.argv.includes('--background-input-experiment')}):
           createXueyinStudy({...options,answer:answerAssessment,courseSession:xySession,mayuanStatus:()=>controller?.status()});
       },onChange:(platform,value)=>{if(platform==='mayuan')controller=value;else if(platform==='xueyin')environmentController=value;else{moocController=value;value.setExpanded(controller?.status().courseExpanded===true);}}});
     courseRuntime.init();
