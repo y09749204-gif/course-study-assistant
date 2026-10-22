@@ -10,6 +10,35 @@ function setup(){
 }
 const zUrl=id=>`https://wisdom-mooc.zhihuishu.com/study/index?recruitAndCourseId=${id}`;
 const xUrl=id=>`https://mooc2-ans.xueyinonline.com/mooc2-ans/mycourse/stu?courseid=${id}&clazzid=22&cpi=33&enc=synthetic-secret`;
+const mUrl=term=>`https://www.icourse163.org/mooc/learn/MOCK-100/content/200?tid=${term}&unitId=400`;
+
+test('MOOC profiles encrypt links and isolate progress by course offering',()=>{
+  const {p,data}=setup();
+  const a=p.save({name:'Mock MOOC A',platform:'icourse',url:mUrl('300')});
+  const b=p.save({name:'Mock MOOC B',platform:'icourse',url:mUrl('301')});
+  assert.notEqual(p.dataFor(a),p.dataFor(b));
+  assert.equal(p.config(a).url,mUrl('300'));
+  assert.equal(p.config(a).courseId,null);
+  assert.equal(p.list().profiles.find(x=>x.id===a.id).configured,true);
+  assert.equal(fs.readFileSync(path.join(data,'courses.json'),'utf8').includes('icourse163.org'),false);
+  const before=fs.readFileSync(path.join(data,'course-config',a.id+'.bin'));
+  assert.equal(before.includes(Buffer.from('icourse163.org')),false);
+  assert.throws(()=>p.save({...a,url:mUrl('302')}),/新增课程/);
+  assert.deepEqual(fs.readFileSync(path.join(data,'course-config',a.id+'.bin')),before);
+  p.save({...a,url:mUrl('300').replace('content/200','content/201')});
+  p.select(a.id);assert.equal(p.list().selectedId,a.id);
+});
+
+test('a registered platform cannot dispatch to a different adapter before activation',()=>{
+  const {p}=setup(),host=new EventEmitter(),ipc=new EventEmitter();
+  const runtime=createCourseRuntime({profiles:p,ipcMain:ipc,host,onChange:()=>{},factory:()=>{throw Error('Unexpected adapter creation');}});
+  const before=JSON.stringify(p.list());
+  assert.throws(()=>runtime.save({name:'MOOC',platform:'icourse',url:mUrl('300')}),/尚未启用/);
+  assert.equal(JSON.stringify(p.list()),before);
+  const item=p.save({name:'MOOC',platform:'icourse',url:mUrl('300')});
+  assert.throws(()=>runtime.select(item.id),/尚未启用/);
+  assert.equal(p.list().selectedId,'mayuan');
+});
 test('default courses retain their legacy data paths; new courses are encrypted and isolated',()=>{
   const {p,data}=setup();assert.equal(p.dataFor(p.get('mayuan')),data);assert.equal(p.dataFor(p.get('xueyin')),data);
   const a=p.save({name:'Mock A',platform:'mayuan',url:zUrl('mock-course-alpha'),minLessons:3,minMinutes:40});

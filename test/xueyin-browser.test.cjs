@@ -869,3 +869,18 @@ test('catalog completion recovers a document task without replaying or inventing
   assert.equal(await page.evaluate(()=>window.__state.sectionPending['1.1']),0);
   assert.equal(await page.evaluate(()=>window.__state.platformDone),2);
 });
+
+for(const accepted of [true,false,'cooldown'])test(`stalled playback ${accepted==='cooldown'?'waits for recovery cooldown':accepted?'requests normal reload without credit':'blocks when recovery budget is exhausted'}`,async t=>{
+  const page=await setup(t,{detailOnly:true});
+  await page.waitForFunction(()=>window.__playCalls.v1>0);
+  await page.evaluate(accepted=>{
+    window.recoveryCalls=[];XyBridge.recoverPlayback=async request=>{recoveryCalls.push(request);if(accepted==='cooldown'&&recoveryCalls.length===1)return {accepted:false,reason:'cooldown'};if(accepted)document.querySelector('#v1').currentTime=21;return accepted?{accepted:true}:{accepted:false,reason:'exhausted'};};
+    document.querySelector('#v1').currentTime=20;
+  },accepted);
+  await page.waitForTimeout(1500);await page.evaluate(()=>{const realNow=Date.now;Date.now=()=>realNow()+31000;});
+  await page.waitForFunction(()=>recoveryCalls.length>0,null,{timeout:6000});
+  if(accepted){await page.waitForTimeout(2800);assert.equal(await page.evaluate(()=>__state.status),'running');assert.equal(await page.evaluate(()=>recoveryCalls.length),accepted==='cooldown'?2:1);}
+  else{await page.waitForFunction(()=>__state.status==='blocked');assert.match(await page.evaluate(()=>__state.blockedReason),/重载 2 次/);}
+  assert.deepEqual(await page.evaluate(()=>__state.completedTaskIds),[]);
+  assert.equal(await page.evaluate(()=>recoveryCalls[0].positionSeconds),20);
+});

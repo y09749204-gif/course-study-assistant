@@ -8,6 +8,17 @@ let active=false,lastPlayTarget=null,pendingCount=null,lastChildVideoStatusAt=0,
 const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
 function cards(){
   if(!document.body)return [];
+  // A job container identifies its own video task. Aggregate chapter counts
+  // include documents and may arrive before/after the live video marker.
+  const jobs=[...document.querySelectorAll('.ans-attach-ct')].filter(container=>
+    visible(container)&&container.querySelector('video,iframe[src*="/ananas/modules/video/index.html"]')&&
+    (container.querySelector('.ans-job-icon,.task-condition')||container.classList.contains('ans-job-finished')));
+  if(jobs.length){
+    stableCards=jobs.map(element=>({element,top:element.getBoundingClientRect().top,
+      media:element.querySelector('video,iframe[src*="/ananas/modules/video/index.html"]'),
+      complete:element.classList.contains('ans-job-finished'),evidence:'job-marker'}));
+    return stableCards;
+  }
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   const markers=[];let text;
   while((text=walker.nextNode())){
@@ -133,7 +144,7 @@ addEventListener('message',event=>{
     const list=cards();
     try{parent.postMessage({...event.data,
       pendingDocuments:pendingDocuments(),
-      cards:list.length?list.map(card=>({complete:card.complete,hasMedia:!!card.media})):event.data.cards,
+      cards:list.length?list.map(card=>({complete:card.complete,hasMedia:!!card.media,evidence:card.evidence})):event.data.cards,
       markerSamples:markerSamples().length?markerSamples():event.data.markerSamples},'*');}catch{}
     return;
   }
@@ -170,7 +181,7 @@ setInterval(()=>{
     playError:lastPlayError,startAttempts,
     error:downloadFailed?'download-failed':playbackFailed?'playback-failed':null,
     pendingDocuments:pendingDocuments(),
-    cards:list.map(card=>({complete:card.complete,hasMedia:!!card.media})),
+    cards:list.map(card=>({complete:card.complete,hasMedia:!!card.media,evidence:card.evidence})),
     markerSamples:samples,childFrames:document.querySelectorAll('iframe').length,
     childVideoStatusAge:lastChildVideoStatusAt?Date.now()-lastChildVideoStatusAt:null,
     children:[...document.querySelectorAll('iframe')].slice(0,6).map(frame=>{

@@ -254,6 +254,12 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
       start:String(item.start||'').slice(0,90),
     })):[];
     update({pageDiagnostics:{...(read().pageDiagnostics||{}),catalog:{
+      documentReading:detail.documentReading?{
+        stage:['idle','loading','browsing','waiting','complete','unsupported','unconfirmed','stalled'].includes(detail.documentReading.stage)?detail.documentReading.stage:null,
+        reason:['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'].includes(detail.documentReading.reason)?detail.documentReading.reason:null,
+        index:Number.isInteger(detail.documentReading.index)?Math.min(63,Math.max(0,detail.documentReading.index)):null,
+        total:Number.isInteger(detail.documentReading.total)?Math.min(64,Math.max(0,detail.documentReading.total)):null,
+      }:null,
       candidateCount:Number(detail.candidateCount)||0,sectionInBody:!!detail.sectionInBody,
       iframeCount:Number(detail.iframeCount)||0,videoCount:Number(detail.videoCount)||0,
       iframes:Array.isArray(detail.iframes)?detail.iframes.slice(0,4).map(item=>({
@@ -363,6 +369,42 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
     return update(patch);
   });
   let lastDocumentWheelAt=0;
+  ipcMain.handle('xy-document-recover',(event,detail)=>{
+    const current=read();
+    if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||current.status!=='running'||
+      current.currentIsQuiz||current.submissionIntent||current.awaitingPlatform||
+      !/^\d+\.\d+\/document\/\d+$/.test(current.currentTask||'')||
+      !current.currentTask.startsWith(`${current.currentSection}/document/`)||
+      detail?.taskId!==current.currentTask||detail.reason!=='resource-timeout')return {accepted:false};
+    const day=X.localDay(),previous=current.documentRecovery;
+    const same=previous?.day===day&&previous.taskId===current.currentTask;
+    const attempts=same&&Number.isInteger(previous.attempts)?Math.max(0,previous.attempts):0;
+    if(attempts>=2)return {accepted:false,reason:'exhausted'};
+    if(same&&Date.now()-Date.parse(previous.at)<60000)return {accepted:false,reason:'cooldown'};
+    update({documentRecovery:{day,taskId:current.currentTask,attempts:attempts+1,at:new Date().toISOString()}});
+    if(storage.failed())return {accepted:false};
+    try{contents().reload();return {accepted:true};}catch{return {accepted:false,reason:'reload-failed'};}
+  });
+  ipcMain.handle('xy-playback-recover',(event,detail)=>{
+    const current=read();
+    if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||
+      current.status!=='running'||current.currentIsQuiz||current.submissionIntent||current.awaitingPlatform||
+      !/^\d+\.\d+\/video\/\d+$/.test(current.currentTask||'')||
+      !current.currentTask.startsWith(`${current.currentSection}/video/`)||
+      detail?.taskId!==current.currentTask||!Number.isFinite(detail.positionSeconds)||
+      detail.positionSeconds<0||detail.positionSeconds>86400)return {accepted:false};
+    const day=X.localDay(),previous=current.playbackRecovery;
+    const same=previous?.day===day&&previous.taskId===current.currentTask;
+    const attempts=same&&Number.isInteger(previous.attempts)?Math.max(0,previous.attempts):0;
+    if(attempts>=2)return {accepted:false,reason:'exhausted'};
+    if(same&&Date.now()-Date.parse(previous.at)<60000)return {accepted:false,reason:'cooldown'};
+    update({playbackRecovery:{day,taskId:current.currentTask,attempts:attempts+1,
+      at:new Date().toISOString(),positionSeconds:Math.round(detail.positionSeconds)}});
+    if(storage.failed())return {accepted:false};
+    // Reload through the platform's normal entry. Never seek or award progress.
+    try{contents().reload();return {accepted:true};}
+    catch{return {accepted:false,reason:'reload-failed'};}
+  });
   ipcMain.handle('xy-document-scroll',async(event,detail)=>{
     if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||
       read().status!=='running'||!/\/document\/\d+$/.test(read().currentTask||''))return {accepted:false};
@@ -380,7 +422,7 @@ function createXueyinStudy({WebContentsView,hostWindow,ipcMain,Notification,safe
   ipcMain.handle('xy-document-return',async event=>{
     const current=read(),target=config();
     if(!trustedCourse(event)||event.senderFrame!==contents().mainFrame||!target||current.status!=='running'||
-      !/\/document\/\d+$/.test(current.awaitingPlatform?.taskId||'')||
+      !/\/(?:document|video)\/\d+$/.test(current.awaitingPlatform?.taskId||'')||
       current.awaitingPlatform.section!==current.currentSection)return {accepted:false};
     if(documentDebuggerOwned){try{contents().debugger.detach();}catch{}documentDebuggerOwned=false;}
     await contents().loadURL(target.url);

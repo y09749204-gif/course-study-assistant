@@ -41,6 +41,8 @@ if(location.protocol==='https:'&&officialHost(location.hostname)){
       catalogDiagnostic:details=>ipcRenderer.send('xy-catalog-diagnostic',details),
       returnToCourse:()=>ipcRenderer.invoke('xy-document-return'),
       scroll:details=>ipcRenderer.invoke('xy-document-scroll',details),
+      recoverPlayback:details=>ipcRenderer.invoke('xy-playback-recover',details),
+      recoverDocument:details=>ipcRenderer.invoke('xy-document-recover',details),
       playback:details=>ipcRenderer.send('xy-playback-observation',details),
       onCommand:listener=>{
         commandListeners.push(listener);
@@ -124,7 +126,12 @@ function runContent(){
     const bounds=node.getBoundingClientRect();
     return [...node.querySelectorAll('i,svg,span,[class*=icon]')].some(icon=>{
       const rect=icon.getBoundingClientRect();
-      if(!visible(icon)||rect.width>42||rect.height>42||rect.left>bounds.left+85)return false;
+      if(!visible(icon)||rect.width>42||rect.height>42)return false;
+      // The platform's course catalog puts its explicit completion icon on
+      // the right; generic color heuristics remain limited to the left gutter.
+      if(icon.classList.contains('icon_Completed')||
+        icon.classList.contains('catalog_state')&&icon.classList.contains('icon_yiwanc'))return true;
+      if(rect.left>bounds.left+85)return false;
       const style=getComputedStyle(icon);
       return green(style.color)||green(style.backgroundColor)||green(style.fill)||
         green(style.stroke)||/(?:complete|finish|success|wancheng|yiwancheng)/i.test(String(icon.className));
@@ -143,7 +150,7 @@ function runContent(){
       const text=lines.join(' '),quiz=/章节测验/.test(text);
       const raw=clean(node.innerText||'');
       const countMatch=raw.match(/(?:^|\s)(\d{1,3})\s*$/);
-      const pending=countMatch?Number(countMatch[1]):!quiz&&completedCatalogRow(node)?0:null;
+      const pending=!quiz&&completedCatalogRow(node)?0:countMatch?Number(countMatch[1]):null;
       const active=/active|selected|current/i.test(String(node.className))||
         node.getAttribute('aria-current')==='true';
       const existing=found.get(id);
@@ -276,7 +283,8 @@ function runContent(){
       if(event.data.type==='xy-document-status'){
         const tasks=event.data.tasks;
         if(!Array.isArray(tasks)||tasks.length>64||!tasks.every(t=>typeof t?.complete==='boolean'))return;
-        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,receivedAt:Date.now()}});
+        frameStatus.set(frame,{...prior,documentReport:{stage:event.data.stage,tasks,index:event.data.index,
+          reason:['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'].includes(event.data.reason)?event.data.reason:null,receivedAt:Date.now()}});
         return;
       }
       frameStatus.set(frame,{...(event.data.type==='xy-card-status'?prior:{}),...event.data,
@@ -314,7 +322,10 @@ function runContent(){
   }
   const clickNext=async rows=>{
     const body=document.body?.innerText||'';
-    if(!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
+    const section=currentSection(rows);
+    const completedSection=rows.some(row=>row.id===section&&!row.quiz&&row.pending===0);
+    if(completedSection)navigationPending=null;
+    if(!completedSection&&!navigationPending&&body.includes('章节详情')&&body.includes('返回课程'))
       navigationPending={section:state.currentSection,at:Date.now()};
     if(navigationPending){
       if(Date.now()-navigationPending.at>20000){
@@ -363,13 +374,29 @@ function runContent(){
     }
     const reportedCards=localCards.length?localCards:
       targets.length===1?frameData(targets[0])?.cards:null;
-    const explicitVideoComplete=state.currentSection===waiting.section&&taskIndex!==undefined&&
+    const freshReport=targets.length===1?frameData(targets[0]):null;
+    if(waiting.catalogRefreshRequested&&row&&currentSection(rows)===waiting.section&&state.currentSection===waiting.section&&
+      taskIndex!==undefined&&freshReport?.cards?.[Number(taskIndex)]?.evidence==='job-marker'&&
+      freshReport.cards[Number(taskIndex)].complete===false){
+      // A newly loaded chapter can contradict the inventory retained during
+      // navigation. Its own unfinished marker invalidates that completion intent.
+      await save({awaitingPlatform:null,currentTask:null,
+        completedTaskIds:(state.completedTaskIds||[]).filter(id=>id!==waiting.taskId),
+        lastObservedAt:now()});
+      return false;
+    }
+    const explicitVideoComplete=!waiting.catalogRefreshRequested&&state.currentSection===waiting.section&&taskIndex!==undefined&&
       reportedCards?.[Number(taskIndex)]?.complete===true;
+    const documentIndex=/\/document\/(\d+)$/.exec(waiting.taskId)?.[1];
+    const documentReport=targets.length===1?frameStatus.get(targets[0])?.documentReport:null;
+    const explicitDocumentComplete=state.currentSection===waiting.section&&row&&documentIndex!==undefined&&
+      (waiting.documentConfirmed===true||documentReport&&Date.now()-documentReport.receivedAt<5000&&
+        documentReport.tasks[Number(documentIndex)]?.complete===true);
     const count=platformCount();
     const lastPointWithoutNumber=row&&row.pending===null&&before===1&&count&&
       (Number.isInteger(waiting.platformDoneBefore)?count.done>waiting.platformDoneBefore:
         waiting.section==='1.1'&&waiting.taskId==='1.1/video/1'&&count.done===3);
-    if(explicitVideoComplete||row&&Number.isInteger(before)&&
+    if(explicitVideoComplete||explicitDocumentComplete||row&&Number.isInteger(before)&&
       (Number.isInteger(row.pending)&&row.pending<before||lastPointWithoutNumber)){
       const doneIds=[...new Set([...(state.completedTaskIds||[]),waiting.taskId])];
       await save({awaitingPlatform:null,completedTaskIds:doneIds,currentTask:null,
@@ -390,7 +417,8 @@ function runContent(){
       bridge.catalogDiagnostic?.({...catalogDiagnostic(),rows:rows.slice(0,8).map(item=>({
         id:item.id,quiz:item.quiz,pending:item.pending,active:item.active,
         start:item.title.slice(0,90)}))});
-      await block(`${waiting.section} 的视频已结束，但目录任务点未减少`);
+      await block(documentIndex!==undefined?`${waiting.section} 的文档完成尚待平台核对`:
+        `${waiting.section} 的视频已结束，但目录任务点未减少`);
     }
     return true;
   }
@@ -403,8 +431,12 @@ function runContent(){
     const index=report.tasks.findIndex(task=>!task.complete);
     const current=new RegExp(`^${id.replace('.', '\\.')}\\/document\\/\\d+$`).test(state.currentTask||'');
     const doneIds=new Set(state.completedTaskIds||[]);
+    if(rows.some(row=>row.id===id))report.tasks.forEach((task,i)=>{
+      if(!task.complete)doneIds.delete(`${id}/document/${i}`);
+    });
     report.tasks.forEach((task,i)=>{if(task.complete)doneIds.add(`${id}/document/${i}`);});
-    if(doneIds.size>(state.completedTaskIds||[]).length)await save({completedTaskIds:[...doneIds]});
+    if(doneIds.size!==(state.completedTaskIds||[]).length||
+      (state.completedTaskIds||[]).some(task=>!doneIds.has(task)))await save({completedTaskIds:[...doneIds]});
     if(index<0){
       if(!current)return false;
       const back=[...document.querySelectorAll('a,button,[role=button],span')]
@@ -412,19 +444,37 @@ function runContent(){
       const link=back?.closest('a,button,[role=button]')||back?.parentElement;
       if(!link&&!bridge.returnToCourse){await block('文档已浏览，但未找到返回课程入口以核对任务点');return true;}
       await save({awaitingPlatform:{section:id,taskId:state.currentTask,
-        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,returnedAt:now()}});
+        pendingBefore:state.sectionPending?.[id],platformDoneBefore:state.platformDone,
+        documentConfirmed:true,returnedAt:now()}});
       if(bridge.returnToCourse)void bridge.returnToCourse().catch(()=>{});
       else link.click();
       return true;
     }
-    if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
-      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,index,total:report.tasks.length}});
-      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?'文档阅读器未加载或不支持，请展开课程检查':
-        '文档已浏览至末页，但平台未确认完成；请展开课程核对');return true;
-    }
     const taskId=`${id}/document/${index}`;
     if(state.currentTask!==taskId)await save({currentTask:taskId,lastObservedAt:now()});
-    if(report.stage==='idle')target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    if(['unsupported','unconfirmed','stalled'].includes(report.stage))
+      bridge.catalogDiagnostic?.({documentReading:{stage:report.stage,reason:report.reason,index,total:report.tasks.length}});
+    if(report.stage==='unsupported'&&report.reason==='resource-timeout'){
+      let recovery=null;
+      try{recovery=await bridge.recoverDocument?.({taskId,reason:report.reason});}catch{}
+      if(recovery?.accepted||recovery?.reason==='cooldown')return true;
+      if(recovery?.reason==='exhausted'){
+        await block('文档图片重试及自动重载后仍未加载，请展开课程检查网络');return true;
+      }
+    }
+    if(['unsupported','unconfirmed','stalled'].includes(report.stage)){
+      const loadingFailure=report.reason==='resource-timeout'?'文档当前页图片加载超过 20 秒，请检查网络后恢复':
+        ['reader-frame-timeout','chapter-frame-timeout'].includes(report.reason)?'文档阅读器超过 20 秒没有响应，请刷新课程后恢复':
+        '文档阅读器未加载或不支持，请展开课程检查';
+      await block(report.stage==='stalled'?'文档滚动超过 20 秒未前进，请展开课程检查阅读器':report.stage==='unsupported'?loadingFailure:
+        '文档已浏览至末页，但平台未确认完成；请展开课程核对');return true;
+    }
+    if(report.stage==='idle'){
+      // Both drivers share the chapter frame. Stop its video driver before
+      // starting the reader so video initialization cannot scroll it away.
+      target.contentWindow.postMessage({type:'xy-pause'},'*');
+      target.contentWindow.postMessage({type:'xy-read-document'},'*');
+    }
     return true;
   }
   async function processVideo(rows){
@@ -467,9 +517,13 @@ function runContent(){
       return true;
     }
     if(remoteMode){
-      for(const [position,card] of remoteCards.entries())
+      for(const [position,card] of remoteCards.entries()){
+        if(card.evidence==='job-marker'&&!card.complete&&confirmedPending>0)
+          doneIds.delete(`${id}/video/${position}`);
         if(card.complete)doneIds.add(`${id}/video/${position}`);
-      if(doneIds.size>(state.completedTaskIds||[]).length)
+      }
+      if(doneIds.size!==(state.completedTaskIds||[]).length||
+        (state.completedTaskIds||[]).some(task=>!doneIds.has(task)))
         await save({completedTaskIds:[...doneIds],lastObservedAt:now()});
     }else if(cardMode){
       for(const [position,card] of cards.entries())
@@ -498,8 +552,16 @@ function runContent(){
         !doneIds.has(`${id}/video/${position}`));
     if(index<0){
       if(Number.isInteger(confirmedPending)&&confirmedPending>0){
-        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         const documents=frameData(videos[0])?.pendingDocuments;
+        if(remoteMode&&documents===0&&remoteCards.every(card=>card.complete&&card.evidence==='job-marker')&&bridge.returnToCourse){
+          const finishedTask=new RegExp(`^${id.replace('.', '\\.')}\\/video\\/\\d+$`).test(state.currentTask||'')?
+            state.currentTask:`${id}/video/${remoteCards.length-1}`;
+          await save({currentTask:finishedTask,awaitingPlatform:{section:id,taskId:finishedTask,
+            pendingBefore:confirmedPending,platformDoneBefore:count?.done??state.platformDone,
+            catalogRefreshRequested:true,returnedAt:now()}});
+          void bridge.returnToCourse().catch(()=>{});return true;
+        }
+        bridge.catalogDiagnostic?.(videoCardDiagnostic());
         await block(Number.isInteger(documents)&&documents>0?
           `本节视频已完成，剩余 ${documents} 份文档任务；请展开课程阅读，完成后恢复`:
           '目录仍有未完成任务点，但当前页面未找到待播放卡片');
@@ -601,7 +663,13 @@ function runContent(){
           position:progress.currentTime,previousPosition:lastTime,quietFor,
           readyState:progress.readyState,networkState:progress.networkState,
           mediaSampleAge:target.tagName==='VIDEO'?0:Date.now()-frameStatus.get(target).mediaReceivedAt}});
-        await block('视频播放时间超过 30 秒未前进，请检查播放器或在 Chrome 继续观看');return true;
+        let recovery=null;
+        try{recovery=await bridge.recoverPlayback?.({taskId,positionSeconds:progress.currentTime});}catch{}
+        if(recovery?.accepted)return true;
+        if(recovery?.reason==='cooldown')return true;
+        await block(recovery?.reason==='exhausted'?
+          '视频缓冲自动重载 2 次后仍未恢复，请展开课程切换线路或在 Chrome 核对':
+          '视频播放时间超过 30 秒未前进，请检查播放器或在 Chrome 继续观看');return true;
       }
     }else if(Date.now()-lastNavigation>20000&&Date.now()-lastVideoProgress>30000){
       await block('无法读取视频播放状态，请检查播放器');return true;
@@ -1166,6 +1234,17 @@ let active=false,lastPlayTarget=null,pendingCount=null,lastChildVideoStatusAt=0,
 const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
 function cards(){
   if(!document.body)return [];
+  // A job container identifies its own video task. Aggregate chapter counts
+  // include documents and may arrive before/after the live video marker.
+  const jobs=[...document.querySelectorAll('.ans-attach-ct')].filter(container=>
+    visible(container)&&container.querySelector('video,iframe[src*="/ananas/modules/video/index.html"]')&&
+    (container.querySelector('.ans-job-icon,.task-condition')||container.classList.contains('ans-job-finished')));
+  if(jobs.length){
+    stableCards=jobs.map(element=>({element,top:element.getBoundingClientRect().top,
+      media:element.querySelector('video,iframe[src*="/ananas/modules/video/index.html"]'),
+      complete:element.classList.contains('ans-job-finished'),evidence:'job-marker'}));
+    return stableCards;
+  }
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   const markers=[];let text;
   while((text=walker.nextNode())){
@@ -1291,7 +1370,7 @@ addEventListener('message',event=>{
     const list=cards();
     try{parent.postMessage({...event.data,
       pendingDocuments:pendingDocuments(),
-      cards:list.length?list.map(card=>({complete:card.complete,hasMedia:!!card.media})):event.data.cards,
+      cards:list.length?list.map(card=>({complete:card.complete,hasMedia:!!card.media,evidence:card.evidence})):event.data.cards,
       markerSamples:markerSamples().length?markerSamples():event.data.markerSamples},'*');}catch{}
     return;
   }
@@ -1328,7 +1407,7 @@ setInterval(()=>{
     playError:lastPlayError,startAttempts,
     error:downloadFailed?'download-failed':playbackFailed?'playback-failed':null,
     pendingDocuments:pendingDocuments(),
-    cards:list.map(card=>({complete:card.complete,hasMedia:!!card.media})),
+    cards:list.map(card=>({complete:card.complete,hasMedia:!!card.media,evidence:card.evidence})),
     markerSamples:samples,childFrames:document.querySelectorAll('iframe').length,
     childVideoStatusAge:lastChildVideoStatusAt?Date.now()-lastChildVideoStatusAt:null,
     children:[...document.querySelectorAll('iframe')].slice(0,6).map(frame=>{
@@ -1350,14 +1429,16 @@ function runDocumentFrame(){
   const wrapper=location.pathname==='/ananas/modules/pdf/index.html';
   const reader=location.pathname.startsWith('/screen/v2/');
   if(!chapter&&!wrapper&&!reader)return;
-  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0;
+  let active=false,target=null,startedAt=0,lastStep=0,stage='idle',childStage=null,lastPosition=0,progressAt=0,resourceWaitSince=null,childReportAt=0,reason=null;
+  const reasons=['resource-loading','resource-timeout','reader-frame-timeout','chapter-frame-timeout'];
+  let imageRetries=new WeakMap();
   const tasks=()=>[...document.querySelectorAll('.ans-attach-ct')].filter(e=>
     e.querySelector('.ans-job-icon')&&e.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'));
   const complete=e=>e.classList.contains('ans-job-finished');
   const send=(frame,data)=>{try{frame?.contentWindow.postMessage(data,'*');}catch{}};
   const report=data=>{try{parent.postMessage(data,'*');}catch{}};
   const stop=()=>{
-    active=false;stage='idle';
+    active=false;stage='idle';reason=null;
     for(const f of document.querySelectorAll('iframe'))send(f,{type:'xy-pause'});
   };
   addEventListener('message',event=>{
@@ -1365,29 +1446,37 @@ function runDocumentFrame(){
     if(event.source===parent){
       if(event.data?.type==='xy-pause'){stop();return;}
       if(event.data?.type!=='xy-read-document')return;
-      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();}
+      if(!active){active=true;startedAt=Date.now();lastStep=0;stage='loading';target=null;childStage=null;lastPosition=0;progressAt=Date.now();resourceWaitSince=null;childReportAt=0;reason=null;imageRetries=new WeakMap();}
       return;
     }
     if(!['xy-document-progress','xy-document-wheel'].includes(event.data?.type))return;
     const child=[...document.querySelectorAll('iframe')].find(f=>f.contentWindow===event.source);
     if(!child)return;
+    if(event.data.type==='xy-document-progress'&&
+      !['loading','browsing','end','unsupported','unconfirmed','stalled'].includes(event.data.stage))return;
     if(chapter){
       if(!active)return;
       if(child!==target?.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'))return;
       if(event.data.type==='xy-document-wheel'){
+        // Layout changes or a previously initialized video may have moved
+        // this job outside the main viewport. Re-establish the input target.
+        target.scrollIntoView({block:'center',behavior:'instant'});
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;
+      childReportAt=Date.now();reason=reasons.includes(event.data.reason)?event.data.reason:null;
       if(['unsupported','unconfirmed','stalled'].includes(childStage))stage=childStage;
       else if(childStage==='end'&&stage!=='waiting'){stage='waiting';startedAt=Date.now();}
       else if(childStage==='browsing')stage='browsing';
+      else if(childStage==='loading')stage='loading';
     }else if(wrapper){
       if(!active||child!==target)return;
       if(event.data.type==='xy-document-wheel'){
         const r=child.getBoundingClientRect();report({...event.data,x:r.left+event.data.x,y:r.top+event.data.y});return;
       }
       childStage=event.data.stage;
-      report({type:'xy-document-progress',stage:childStage});
+      childReportAt=Date.now();reason=reasons.includes(event.data.reason)?event.data.reason:null;
+      report({type:'xy-document-progress',stage:childStage,reason});
     }
   });
   setInterval(()=>{
@@ -1397,19 +1486,19 @@ function runDocumentFrame(){
         if(!next){send(target?.querySelector('iframe'),{type:'xy-pause'});stage='complete';active=false;}
         else if(next!==target){
           if(target)send(target.querySelector('iframe'),{type:'xy-pause'});
-          target=next;stage='loading';childStage=null;startedAt=Date.now();
+          target=next;stage='loading';childStage=null;startedAt=Date.now();childReportAt=0;reason=null;
           target.scrollIntoView({block:'center',behavior:'instant'});
           send(target.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'),{type:'xy-read-document'});
         }else if(stage==='loading'){
           send(target.querySelector('iframe[src*="/ananas/modules/pdf/index.html"]'),{type:'xy-read-document'});
-          if(Date.now()-startedAt>20000)stage='unsupported';
         }else if(stage==='waiting'&&Date.now()-startedAt>15000)stage='unconfirmed';
+        if(next&&Date.now()-Math.max(startedAt,childReportAt)>20000){stage='unsupported';reason='chapter-frame-timeout';}
       }
       if(active&&['unsupported','unconfirmed','stalled'].includes(stage)){
         active=false;send(target?.querySelector('iframe'),{type:'xy-pause'});
       }
       report({type:'xy-document-status',stage,tasks:list.map(e=>({complete:complete(e)})),
-        index:target?list.indexOf(target):null});
+        index:target?list.indexOf(target):null,reason});
       return;
     }
     if(!active)return;
@@ -1419,25 +1508,52 @@ function runDocumentFrame(){
         try{return r.width>=260&&r.height>=150&&official(new URL(f.src,location.href).origin);}catch{return false;}
       });
       const frame=candidates.length===1?candidates[0]:null;
-      if(frame){target=frame;send(frame,{type:'xy-read-document'});}
-      if(!childStage&&Date.now()-startedAt>20000)report({type:'xy-document-progress',stage:'unsupported'});
+      if(frame){
+        if(frame!==target){target=frame;childStage=null;childReportAt=0;}
+        send(frame,{type:'xy-read-document'});
+      }
+      if(Date.now()-Math.max(startedAt,childReportAt)>20000)
+        report({type:'xy-document-progress',stage:'unsupported',reason:'reader-frame-timeout'});
       return;
     }
     // Use the reader's real scrolling surface; its own scroll handlers report progress.
     const images=[...document.querySelectorAll('.fileBox img')];
     const root=document.scrollingElement;
-    if(!root||!images.length||images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;}).some(e=>!e.complete||e.naturalWidth===0)){
-      if(Date.now()-startedAt>20000)report({type:'xy-document-progress',stage:'unsupported'});
+    const visibleImages=images.filter(e=>{const r=e.getBoundingClientRect();return r.bottom>0&&r.top<innerHeight;});
+    if(!root||!images.length||visibleImages.some(e=>!e.complete||e.naturalWidth===0)){
+      if(resourceWaitSince===null)resourceWaitSince=Date.now();
+      for(const image of visibleImages.filter(e=>e.complete&&e.naturalWidth===0)){
+        const attempt=imageRetries.get(image)||{count:0,at:0};
+        if(attempt.count>=2||Date.now()-attempt.at<3000)continue;
+        try{
+          const source=image.currentSrc||image.getAttribute('src');
+          if(!source||new URL(source,location.href).protocol!=='https:')continue;
+          imageRetries.set(image,{count:attempt.count+1,at:Date.now()});
+          image.src=source;
+        }catch{}
+      }
+      const timedOut=Date.now()-resourceWaitSince>20000;
+      report({type:'xy-document-progress',stage:timedOut?'unsupported':'loading',
+        reason:timedOut?'resource-timeout':'resource-loading'});
       return;
     }
+    if(resourceWaitSince!==null){resourceWaitSince=null;progressAt=Date.now();}
     if(root.scrollTop!==lastPosition){lastPosition=root.scrollTop;progressAt=Date.now();}
     if(stage==='browsing'&&Date.now()-progressAt>20000){report({type:'xy-document-progress',stage:'stalled'});return;}
     if(Date.now()-lastStep<3000)return;
     lastStep=Date.now();
     if(stage==='loading'){
       window.scrollTo({top:0,behavior:'instant'});stage='browsing';
+      // Loading and layout time must not consume the reader's progress budget.
+      lastPosition=root.scrollTop;progressAt=Date.now();
     }else if(root.scrollTop+root.clientHeight>=root.scrollHeight-3){stage='end';}
-    else report({type:'xy-document-wheel',x:innerWidth/2,y:innerHeight/2,amount:Math.max(80,root.clientHeight*.85)});
+    else {
+      const amount=Math.max(80,root.clientHeight*.85);
+      // Keep the enclosing job visible and deliver the platform's normal wheel
+      // input as well; reader scrolling remains independent of input routing.
+      report({type:'xy-document-wheel',x:innerWidth/2,y:innerHeight/2,amount});
+      window.scrollBy({top:amount,behavior:'instant'});
+    }
     report({type:'xy-document-progress',stage});
   },1000);
 })();

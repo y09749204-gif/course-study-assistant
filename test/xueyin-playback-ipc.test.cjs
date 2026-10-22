@@ -23,13 +23,13 @@ test('course iframe diagnostics and document wheel input enforce source, status 
   const hostWindow=new EventEmitter();
   Object.assign(hostWindow,{contentView:{addChildView:()=>{},removeChildView:()=>{}},
     getContentSize:()=>[1200,900],isDestroyed:()=>false,show:()=>{},focus:()=>{}});
-  let view;const wheelCommands=[],navigation=[];let bounds,zoom=1;
+  let view,recoveryReloads=0;const wheelCommands=[],navigation=[];let bounds,zoom=1;
   class WebContentsView{
     constructor(){
       const contents=new EventEmitter();
       const mainFrame={url:courseUrl,framesInSubtree:[]};
       Object.assign(contents,{mainFrame,getURL:()=>courseUrl,isDestroyed:()=>false,
-        setWindowOpenHandler:()=>{},send:()=>{},close:()=>{},loadURL:async url=>{navigation.push(url);},
+        setWindowOpenHandler:()=>{},send:()=>{},close:()=>{},reload:()=>{recoveryReloads++;},loadURL:async url=>{navigation.push(url);},
         getZoomFactor:()=>zoom,setZoomFactor:value=>{zoom=value;},
         debugger:{isAttached:()=>false,attach:()=>{},sendCommand:async(name,detail)=>wheelCommands.push({name,detail})}});
       this.webContents=contents;view=this;
@@ -95,8 +95,53 @@ test('course iframe diagnostics and document wheel input enforce source, status 
   assert.equal((await handlers.get('xy-document-return')(event)).accepted,false);
   assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,true);
   assert.equal(navigation.at(-1),courseUrl);
+  handlers.get('xy-state-update')(rootEvent,{awaitingPlatform:{section:'1.1',taskId:'1.1/video/0'}});
+  assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,true);
+  handlers.get('xy-state-update')(rootEvent,{awaitingPlatform:{section:'1.1',taskId:'1.1/quiz/0'}});
+  assert.equal((await handlers.get('xy-document-return')(rootEvent)).accepted,false);
 
+  listeners.get('xy-catalog-diagnostic')(rootEvent,{documentReading:{stage:'unsupported',reason:'reader-frame-timeout',index:0,total:2,question:'not diagnostic data'}});
+  assert.deepEqual(controller.status().pageDiagnostics.catalog.documentReading,{stage:'unsupported',reason:'reader-frame-timeout',index:0,total:2});
   const stateFile=path.join(data,'xueyin-study','state.json');
+  handlers.get('xy-state-update')(rootEvent,{status:'running',currentIsQuiz:false,currentSection:'1.1',currentTask:'1.1/video/0',awaitingPlatform:null,submissionIntent:null});
+  const recovery={taskId:'1.1/video/0',positionSeconds:25};
+  const recover=detail=>handlers.get('xy-playback-recover')(rootEvent,detail);
+  assert.equal(handlers.get('xy-playback-recover')(event,recovery).accepted,false);
+  assert.equal(recover({...recovery,taskId:'1.2/video/0'}).accepted,false);
+  assert.equal(recover({...recovery,positionSeconds:NaN}).accepted,false);
+  const beforeRecovery=JSON.parse(fs.readFileSync(stateFile,'utf8'));
+  for(const patch of [{currentIsQuiz:true},{submissionIntent:{section:'1.1'}},{awaitingPlatform:{section:'1.1'}},{currentSection:'1.2'}]){
+    fs.writeFileSync(stateFile,JSON.stringify({...beforeRecovery,...patch}));assert.equal(recover(recovery).accepted,false);
+  }
+  fs.writeFileSync(stateFile,JSON.stringify(beforeRecovery));
+  controller.command('PAUSE');assert.equal(recover(recovery).accepted,false);controller.command('RUN');
+  assert.equal(recover(recovery).accepted,true);assert.equal(recoveryReloads,1);
+  assert.equal(recover(recovery).reason,'cooldown');assert.equal(recoveryReloads,1);
+  const persisted=JSON.parse(fs.readFileSync(stateFile,'utf8'));
+  assert.equal(persisted.playbackRecovery.attempts,1);
+  persisted.playbackRecovery.at=new Date(Date.now()-61000).toISOString();fs.writeFileSync(stateFile,JSON.stringify(persisted));
+  assert.equal(recover(recovery).accepted,true);assert.equal(recoveryReloads,2);
+  assert.equal(recover(recovery).reason,'exhausted');assert.equal(recoveryReloads,2);
+  assert.deepEqual(controller.status().completedTaskIds,[]);
+  assert.deepEqual(controller.status().submittedQuizzes,[]);
+  handlers.get('xy-state-update')(rootEvent,{currentTask:'1.1/document/0'});
+  assert.equal(recover({taskId:'1.1/document/0',positionSeconds:25}).accepted,false);
+  const documentRequest={taskId:'1.1/document/0',reason:'resource-timeout'};
+  const recoverDocument=detail=>handlers.get('xy-document-recover')(rootEvent,detail);
+  assert.equal(handlers.get('xy-document-recover')(event,documentRequest).accepted,false);
+  assert.equal(recoverDocument({...documentRequest,reason:'unconfirmed'}).accepted,false);
+  assert.equal(recoverDocument({...documentRequest,taskId:'1.1/document/1'}).accepted,false);
+  const documentBefore=JSON.parse(fs.readFileSync(stateFile,'utf8'));
+  for(const patch of [{status:'paused'},{currentIsQuiz:true},{submissionIntent:{section:'1.1'}},{awaitingPlatform:{section:'1.1'}},{currentSection:'1.2'},{currentTask:'1.1/video/0'}]){
+    fs.writeFileSync(stateFile,JSON.stringify({...documentBefore,...patch}));assert.equal(recoverDocument(documentRequest).accepted,false);
+  }
+  fs.writeFileSync(stateFile,JSON.stringify(documentBefore));
+  assert.equal(recoverDocument(documentRequest).accepted,true);assert.equal(recoveryReloads,3);
+  assert.equal(recoverDocument(documentRequest).reason,'cooldown');
+  const documentRetry=JSON.parse(fs.readFileSync(stateFile,'utf8'));documentRetry.documentRecovery.at=new Date(Date.now()-61000).toISOString();fs.writeFileSync(stateFile,JSON.stringify(documentRetry));
+  assert.equal(recoverDocument(documentRequest).accepted,true);assert.equal(recoveryReloads,4);
+  assert.equal(recoverDocument(documentRequest).reason,'exhausted');assert.equal(recoveryReloads,4);
+  assert.deepEqual(controller.status().completedTaskIds,[]);
   const expired=new Date(Date.now()-60000).toISOString();
   fs.writeFileSync(stateFile,JSON.stringify({status:'blocked',
     blockedReason:'1.1 的视频已结束，但目录任务点未减少',

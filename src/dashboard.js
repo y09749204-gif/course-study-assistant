@@ -1,5 +1,8 @@
 const el=id=>document.getElementById(id);
-let current=null,environmentState=null,selected='mayuan',resizeRequest=0,refreshVersion=0,operationBusy=false,uiError='';
+let current=null,environmentState=null,moocState=null,selected='mayuan',resizeRequest=0,refreshVersion=0,operationBusy=false,uiError='';
+const platformNames={mayuan:'智慧树',xueyin:'学习通',icourse:'中国大学 MOOC'};
+const activeData=()=>selected==='icourse'?moocState:selected==='xueyin'?environmentState:current;
+const activeApi=()=>selected==='icourse'?mooc:selected==='xueyin'?environment:study;
 let courseList=null,selectedProfile='mayuan',onboardingShown=false;
 const labels={idle:'未开始',running:'进行中',paused:'已暂停',blocked:'需要处理',interrupted:'已中断',ended:'已结束',complete:'已完成',submitting:'提交中'};
 const applyWidth=width=>{document.documentElement.style.setProperty('--sidebar-width',`${width}px`);el('divider').setAttribute('aria-valuenow',String(width));};
@@ -7,9 +10,11 @@ function closeMenu(focus=false){el('moreMenu').hidden=true;el('moreButton').setA
 function showTab(name){
   const settings=name==='settings';
   el('studyPanel').hidden=settings||selected!=='mayuan';el('environmentPanel').hidden=settings||selected!=='xueyin';
+  el('moocPanel').hidden=settings||selected!=='icourse';
   el('taskPanel').hidden=settings;el('settingsPanel').hidden=!settings;
   el('xySettings').hidden=!!globalThis.courses||selected!=='xueyin';el('mayuanConfig').hidden=selected!=='mayuan';
   el('mayuanReview').hidden=selected!=='mayuan';el('environmentReview').hidden=selected!=='xueyin';
+  el('moocReview').hidden=selected!=='icourse';
   el('tabSettings').setAttribute('aria-expanded',String(settings));closeMenu();el('sidebar').scrollTop=0;
 }
 function renderReview(data){
@@ -24,21 +29,23 @@ function renderReview(data){
 }
 function renderTask(){
   if(!current||!environmentState)return;
-  const xy=selected==='xueyin',data=xy?environmentState:current,state=xy?data:data.dailyState;
+  const xy=selected==='xueyin',isMooc=selected==='icourse',data=activeData();if(!data)return;
+  const state=xy||isMooc?data:data.dailyState;
   const issue=xy?data.playbackObservation?.issue:null;
   const manual=xy&&data.status==='blocked'&&data.playbackObservation?.playing===true;
   const failed=['download-failed','playback-failed','media-error'].includes(issue),stalled=issue==='stalled';
   const intent=xy&&!!data.submissionIntent;
   const warning=!!uiError||failed||stalled||['blocked','interrupted'].includes(state.status)||intent;
-  const label=uiError?'操作失败':failed?'视频加载失败':stalled?'播放卡住':manual?'手动播放中':state.status==='complete'&&!xy?'本地达标':labels[state.status]||state.status;
+  const label=uiError?'操作失败':failed?'视频加载失败':stalled?'播放卡住':manual?'手动播放中':state.status==='complete'&&!xy&&!isMooc?'本地达标':labels[state.status]||state.status;
   el('badge').textContent=label;el('badge').title=label;
   el('badge').dataset.tone=warning?'warning':state.status==='complete'?'success':['running','submitting'].includes(state.status)?'active':'neutral';
-  const section=xy?data.currentSection:state.currentLessonConfirmed===true&&data.courseOnTarget?state.currentLesson:null;
+  const section=xy?data.currentSection:isMooc&&data.courseOnTarget?(data.currentSection?`内容 ${data.currentSection}`:null):state.currentLessonConfirmed===true&&data.courseOnTarget?state.currentLesson:null;
   el('currentSection').textContent=section||'待确认';
   const videoIndex=xy?(/\/video\/(\d+)$/.exec(data.currentTask||'')?.[1]??null):null;
   const documentIndex=xy?(/\/document\/(\d+)$/.exec(data.currentTask||'')?.[1]??null):null;
   el('taskKind').textContent=xy&&data.currentIsQuiz?'章节测验':videoIndex!==null?`第 ${Number(videoIndex)+1} 段视频`:documentIndex!==null?`浏览第 ${Number(documentIndex)+1} 份文档`:'';
   let message=uiError||state.blockedReason||'';
+  if(isMooc&&!message)message=data.waitingNext?'视频已自然结束，等待平台自动切换；完成情况请在平台核对。':'请在课程页勾选“自动播放下一视频”。正常速度续播；文档、测验和考试需手动处理。';
   if(stalled)message='视频时间超过 20 秒未前进。请检查播放器，或在 Chrome 继续观看；平台任务点待确认。';
   else if(failed)message=issue==='media-error'?`播放器报告媒体错误（代码 ${data.playbackObservation.mediaErrorCode||'未知'}）。请在 Chrome 核对同一视频。`:issue==='playback-failed'?'播放器无法播放，请在 Chrome 核对同一视频。':'视频下载失败，请展开课程手动切换线路或刷新。';
   else if(manual){
@@ -74,6 +81,8 @@ async function refresh(){
     const [data,xy,pinned,profiles]=await Promise.all([study.status(),environment.status(),study.windowPinned?study.windowPinned():true,globalThis.courses?courses.list():null]);
     if(version!==refreshVersion)return;
     current=data;environmentState=xy;
+    moocState=profiles?.profiles.some(p=>p.platform==='icourse')&&globalThis.mooc?await mooc.status():null;
+    if(version!==refreshVersion)return;
     if(profiles){
       const selectionChanged=selectedProfile!==profiles.selectedId;
       courseList=profiles;selectedProfile=profiles.selectedId;
@@ -85,7 +94,7 @@ async function refresh(){
       const signature=JSON.stringify(profiles.profiles.map(p=>[p.id,p.name,p.platform]));
       if(el('courseSelect').dataset.profiles!==signature){
         for(const id of ['courseSelect','profileEdit']){
-          const select=el(id),previous=select.value;select.replaceChildren(...profiles.profiles.map(p=>new Option(p.name+(id==='profileEdit'?` · ${p.platform==='mayuan'?'智慧树':'学习通'}`:''),p.id)));select.value=profiles.profiles.some(p=>p.id===previous)?previous:selectedProfile;
+          const select=el(id),previous=select.value;select.replaceChildren(...profiles.profiles.map(p=>new Option(p.name+(id==='profileEdit'?` · ${platformNames[p.platform]}`:''),p.id)));select.value=profiles.profiles.some(p=>p.id===previous)?previous:selectedProfile;
         }
         el('courseSelect').dataset.profiles=signature;
         if(!el('profileName').value)loadProfile(selectedProfile);
@@ -101,14 +110,15 @@ async function refresh(){
     el('lessons').textContent=String(data.dailyState.completed.length);el('minutes').textContent=String(Math.floor(data.dailyState.seconds/60));
     el('lessonGoal').textContent=`目标 ${data.goals?.minLessons||2} 节`;el('minuteGoal').textContent=`目标 ${data.goals?.minMinutes||25} 分钟`;
     el('xyCount').textContent=`${xy.platformDone??'—'} / ${xy.platformTotal??'—'}`;el('xyQuizzes').textContent=String((xy.submittedQuizzes||[]).length);
+    el('moocEnded').textContent=String(moocState?.observedEnded?.length||0);el('moocMinutes').textContent=String(Math.floor((moocState?.seconds||0)/60));
     el('auto').checked=!!data.enabled;el('xyAuto').checked=!!xy.enabled;
     el('xyConfigNote').textContent=xy.configured?'课程链接已加密保存在本机':'尚未配置课程链接';
-    const active=selected==='xueyin'?xy:data;
-    el('courseProvider').textContent=selected==='xueyin'?'学习通':'智慧树';el('courseDate').textContent=data.dailyState.day||'';
+    const active=activeData()||data;
+    el('courseProvider').textContent=platformNames[selected];el('courseDate').textContent=data.dailyState.day||'';
     const profileName=profiles?.profiles.find(p=>p.id===selectedProfile)?.name||(selected==='xueyin'?'学习通':'智慧树');
-    el('webTitle').textContent=`${selected==='xueyin'?'学习通':'智慧树'} · ${profileName}`;
+    el('webTitle').textContent=`${platformNames[selected]} · ${profileName}`;
     el('courseLocation').textContent=active.courseOnTarget?'课程已打开':active.windowOpen?'登录或加载中':'尚未打开';
-    el('coursePlaceholder').hidden=!!active.windowOpen;el('backCourse').hidden=selected==='xueyin'||!data.scoreRequested;
+    el('coursePlaceholder').hidden=!!active.windowOpen;el('backCourse').hidden=selected==='icourse'?!(active.windowOpen&&!active.courseOnTarget):selected!=='mayuan'||!data.scoreRequested;
     el('openRight').textContent=`打开${profileName}课程`;
     renderReview(data);renderTask();
   }catch(error){if(version===refreshVersion){uiError=`读取失败：${error.message}`;renderTask();}}
@@ -125,19 +135,19 @@ async function run(work){
   try{await work();}catch(error){uiError=`操作失败：${error.message}`;}
   finally{operationBusy=false;await refresh();}
 }
-const openCourse=()=>selected==='mayuan'?study.open():environment.open();
+const openCourse=()=>activeApi().open();
 el('courseSelect').onchange=event=>run(()=>globalThis.courses?courses.select(event.target.value):selectCourse(event.target.value));
 el('open').onclick=()=>run(openCourse);el('openRight').onclick=()=>run(openCourse);
-el('backCourse').onclick=()=>run(()=>study.open());
+el('backCourse').onclick=()=>run(openCourse);
 el('primaryAction').onclick=()=>run(()=>{
-  const state=selected==='xueyin'?environmentState:current.dailyState;
+  const state=selected==='mayuan'?current.dailyState:activeData();if(!state)return;
   if(selected==='xueyin'&&environmentState.submissionIntent||state.status==='submitting')return;
   if(state.status==='complete')return openCourse();
-  return selected==='mayuan'?study.command(state.status==='running'?'PAUSE':'START'):environment.command(state.status==='running'?'PAUSE':'RUN');
+  return activeApi().command(state.status==='running'?'PAUSE':selected==='mayuan'?'START':'RUN');
 });
-el('end').onclick=()=>run(()=>selected==='mayuan'?study.command('END'):environment.command('END'));
-el('refreshCourse').onclick=()=>run(()=>selected==='mayuan'?study.refreshCourse():environment.refresh());
-el('closeCourse').onclick=()=>run(()=>selected==='mayuan'?study.closeCourse():environment.close());
+el('end').onclick=()=>run(()=>activeApi().command('END'));
+el('refreshCourse').onclick=()=>run(()=>selected==='mayuan'?study.refreshCourse():activeApi().refresh());
+el('closeCourse').onclick=()=>run(()=>selected==='mayuan'?study.closeCourse():activeApi().close());
 el('auto').onchange=event=>run(()=>study.enable(event.target.checked));el('xyAuto').onchange=event=>run(()=>environment.enable(event.target.checked));
 el('checkPlatform').onclick=()=>run(()=>study.platformReview());el('openScore').onclick=()=>run(()=>study.openScore());
 el('tabStudy').onclick=()=>showTab('study');el('tabSettings').onclick=()=>{if(el('settingsPanel').hidden&&courseList)loadProfile(selectedProfile);showTab(el('settingsPanel').hidden?'settings':'study');};
@@ -166,7 +176,7 @@ document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!el('moreMe
 el('pinWindow').onclick=()=>run(()=>study.windowPinned(el('pinWindow').getAttribute('aria-pressed')!=='true'));
 el('expandCourse').onclick=()=>run(()=>study.setCourseExpanded(current?.courseExpanded!==true));
 const divider=el('divider');
-const resize=x=>{const request=++resizeRequest;void study.resizePane(x).then(width=>{if(request===resizeRequest)applyWidth(width);}).catch(()=>{});void environment.resizePane(x).catch(()=>{});};
+const resize=x=>{const request=++resizeRequest;void study.resizePane(x).then(width=>{if(request===resizeRequest)applyWidth(width);}).catch(()=>{});void environment.resizePane(x).catch(()=>{});if(moocState)void mooc.resizePane(x).catch(()=>{});};
 divider.addEventListener('pointerdown',event=>{divider.setPointerCapture(event.pointerId);divider.dataset.dragging='true';event.preventDefault();});
 divider.addEventListener('pointermove',event=>{if(divider.dataset.dragging==='true')resize(event.clientX);});
 const endDrag=()=>{delete divider.dataset.dragging;resizeRequest=0;void refresh();};

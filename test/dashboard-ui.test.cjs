@@ -41,6 +41,32 @@ async function setup(t,width=400,height=582){
 async function patch(page,value){await page.evaluate(async value=>{Object.assign(x,value);await refresh();},value);}
 const imagePath=name=>path.join(os.tmpdir(),`course-ui-${name}.png`);
 
+test('MOOC controls and summary dispatch only to the MOOC adapter',async t=>{
+  const p=await setup(t,360,582);
+  await p.evaluate(async()=>{
+    window.moocMock={status:'running',windowOpen:true,courseOnTarget:true,configured:true,currentSection:'200',seconds:180,observedEnded:['200:400'],blockedReason:null};
+    window.registry={selectedId:'mock-mooc',profiles:[{id:'mayuan',platform:'mayuan',name:'模拟智慧树',configured:true},{id:'mock-mooc',platform:'icourse',name:'模拟 MOOC',configured:true}]};
+    window.courses={list:async()=>structuredClone(registry),select:async id=>{registry.selectedId=id;}};
+    window.mooc={status:async()=>structuredClone(moocMock),command:async value=>{calls.push(['mooc-command',value]);moocMock.status=value==='PAUSE'?'paused':value==='END'?'ended':'running';},
+      open:async()=>calls.push(['mooc-open']),close:async()=>calls.push(['mooc-close']),refresh:async()=>calls.push(['mooc-refresh']),resizePane:async()=>{}};
+    await refresh();
+  });
+  assert.equal(await p.locator('#moocPanel').isVisible(),true);
+  assert.equal(await p.locator('#studyPanel').isVisible(),false);
+  assert.equal(await p.locator('#environmentPanel').isVisible(),false);
+  assert.equal(await p.locator('#moocEnded').textContent(),'1');
+  assert.equal(await p.locator('#moocMinutes').textContent(),'3');
+  assert.match(await p.locator('#currentSection').textContent(),/200/);
+  await p.click('#primaryAction');await p.click('#primaryAction');
+  for(const id of ['open','refreshCourse','closeCourse','end']){await p.click('#moreButton');await p.click('#'+id);}
+  const calls=await p.evaluate(()=>window.calls);
+  assert.ok(calls.some(c=>c[0]==='mooc-command'&&c[1]==='PAUSE'));
+  assert.ok(calls.some(c=>c[0]==='mooc-command'&&c[1]==='RUN'));
+  assert.ok(calls.some(c=>c[0]==='mooc-command'&&c[1]==='END'));
+  assert.ok(calls.some(c=>c[0]==='mooc-open'));assert.ok(calls.some(c=>c[0]==='mooc-refresh'));assert.ok(calls.some(c=>c[0]==='mooc-close'));
+  assert.equal(calls.some(c=>['m-command','x-command'].includes(c[0])),false);
+});
+
 test('states have one badge, a contextual primary action and preserved submit protection',async t=>{
   const p=await setup(t);
   assert.equal(await p.locator('#currentSection').textContent(),'12.1');
